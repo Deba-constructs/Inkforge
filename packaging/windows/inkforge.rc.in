@@ -1,0 +1,40 @@
+// INKFORGE — Windows resources for the executable.
+//
+// build.rs fills in this template (icon path and version numbers) and compiles
+// it into the binary, so Explorer shows the INKFORGE name, icon and version
+// instead of a generic program. Do not edit the generated copy in target/.
+//
+// Constants are written as numbers rather than included from <winver.h> so the
+// file compiles with rc.exe, llvm-rc, windres and `zig rc` alike: nothing here
+// needs the Windows SDK headers to be on the include path.
+
+1 ICON "@ICON@"
+
+1 VERSIONINFO
+FILEVERSION @VERSION_COMMA@
+PRODUCTVERSION @VERSION_COMMA@
+FILEFLAGSMASK 0x3fL   // VS_FFI_FILEFLAGSMASK
+FILEFLAGS 0x0L        // release build
+FILEOS 0x40004L       // VOS_NT_WINDOWS32
+FILETYPE 0x1L         // VFT_APP
+FILESUBTYPE 0x0L      // VFT2_UNKNOWN
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904b0"  // US English, Unicode
+    BEGIN
+      VALUE "CompanyName", "INKFORGE"
+      VALUE "FileDescription", "INKFORGE - a digital painting application for artists"
+      VALUE "FileVersion", "@VERSION@"
+      VALUE "InternalName", "inkforge"
+      VALUE "LegalCopyright", "Copyright (c) 2026 INKFORGE contributors. MIT licensed."
+      VALUE "OriginalFilename", "INKFORGE.exe"
+      VALUE "ProductName", "INKFORGE"
+      VALUE "ProductVersion", "@VERSION@"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END
