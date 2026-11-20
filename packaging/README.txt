@@ -119,5 +119,4 @@ DEVELOPMENT.md in the source repository.
 Licence
 -------
 
-INKFORGE is released under the MIT licence (see LICENSE-MIT.txt) or, at your
-option, the Apache License 2.0.
+INKFORGE is released under the MIT licence (see LICENSE-MIT.txt).

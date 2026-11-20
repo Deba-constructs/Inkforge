@@ -1,7 +1,15 @@
 # INKFORGE
 
+[![Latest release](https://img.shields.io/github/v/release/Deba-constructs/Inkforge?label=release)](https://github.com/Deba-constructs/Inkforge/releases/latest)
+[![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](#licence)
+[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
+
 A desktop digital painting application for artists, written in Rust with
 `egui`/`eframe` and a GPU (wgpu) renderer.
+
+**Download for Windows** — the [1.0.0 release](https://github.com/Deba-constructs/Inkforge/releases/latest)
+is a portable ZIP: unzip it, double-click `INKFORGE.exe`, nothing to install
+and no runtime to set up.
 
 INKFORGE is built milestone by milestone. This repository currently contains
 **Milestones 1 to 6 plus most of Milestone 7**: the full editor workspace, a working painting engine
@@ -55,6 +63,19 @@ portable Windows executable and packaged as a downloadable ZIP (see
 Nothing in the UI pretends to work: controls that have no implementation are
 disabled and carry a tooltip saying which milestone delivers them.
 
+## What is missing
+
+Version 1.0.0 is a genuinely usable painting app rather than a finished one.
+These are the gaps, and the table above does not paper over them:
+
+* **No image transform.** A layer or selection cannot be scaled, flipped,
+  skewed or rotated as artwork — canvas rotation turns the view, not the paint.
+* **No layer masks and no clipping masks.**
+* **The Windows executable is unsigned**, so SmartScreen warns the first time it
+  runs. Choose *More info ▸ Run anyway*, or build it yourself.
+* **The pen path has not met a real tablet.** Pressure and tilt are implemented
+  and covered by tests, but only a mouse has driven the released build.
+
 ## Building
 
 Requires a Rust toolchain (1.85 or newer).
@@ -77,10 +98,12 @@ the Rust runtime is statically linked, so end users need no Rust installation.
 
 ### Release package
 
-`1.0.0` is built and packaged. `dist/INKFORGE-1.0.0-windows-x86_64.zip` (5.6 MB)
-holds `INKFORGE.exe` (12.8 MB, 64-bit Windows GUI executable), a `README.txt`
-for the artist and the licence. Nothing needs installing: unzip it and run the
-executable.
+`1.0.0` is published on the [releases page](https://github.com/Deba-constructs/Inkforge/releases/latest)
+as `INKFORGE-1.0.0-windows-x86_64.zip` (5.6 MB). It holds `INKFORGE.exe`
+(12.8 MB, 64-bit Windows GUI executable), a `README.txt` for the artist and the
+licence, and the release notes list its SHA-256. Nothing needs installing: unzip
+it and run the executable. The two scripts below rebuild the same ZIP locally
+into `dist/`.
 
 ```bash
 # On Windows, with the MSVC toolchain:
@@ -104,7 +127,8 @@ Both packaging scripts go through `build.rs`, which compiles
 `packaging/windows/inkforge.rc.in` with whichever resource compiler the machine
 has — the Windows SDK's `rc.exe`, `windres`, `llvm-rc` or zig's `rc` — so a
 Windows build needs no extra manual step. The icon itself is drawn by
-`scripts/make-icon.py`:
+`scripts/make-icon.py`; rerun it to regenerate `packaging/windows/inkforge.ico`
+after changing the artwork.
 
 On Linux the app builds with the default system libraries used by `winit`
 (X11 or Wayland). On Windows nothing beyond the executable is required.
@@ -201,4 +225,4 @@ cross-compiled from Linux), `scripts/make-icon.py` (draws the icon),
 
 ## Licence
 
-MIT OR Apache-2.0.
+MIT — see [`LICENSE-MIT`](LICENSE-MIT).

@@ -4,8 +4,8 @@ version = "1.0.0"
 edition = "2021"
 rust-version = "1.85"
 description = "INKFORGE — a digital painting application for artists"
-license = "MIT OR Apache-2.0"
-repository = "https://example.invalid/inkforge"
+license = "MIT"
+repository = "https://github.com/Deba-constructs/Inkforge"
 default-run = "inkforge"
 
 [dependencies]
