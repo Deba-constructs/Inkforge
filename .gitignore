@@ -1,0 +1,14 @@
+# Rust build output
+/target/
+**/*.rs.bk
+
+# Local release artefacts
+/dist/
+
+# Packaged deliverables handed out from this project (the ZIP is rebuilt by
+# scripts/package-windows-cross.sh; GitHub Releases is where it is published)
+/files/
+
+# OS cruft
+.DS_Store
+Thumbs.db

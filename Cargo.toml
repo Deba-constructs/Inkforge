@@ -1,0 +1,52 @@
+[package]
+name = "inkforge"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.85"
+description = "INKFORGE — a digital painting application for artists"
+license = "MIT OR Apache-2.0"
+repository = "https://example.invalid/inkforge"
+default-run = "inkforge"
+
+[dependencies]
+# Desktop shell + immediate-mode GUI. `eframe` re-exports `egui`, and the wgpu
+# backend is used so the GPU path is the same family on Windows (DX12/Vulkan).
+eframe = { version = "0.37", default-features = false, features = [
+    "wgpu",
+    "default_fonts",
+    "x11",
+    "wayland",
+] }
+
+# PNG/JPEG decoding and encoding for importing and exporting artwork. Only the
+# two formats INKFORGE supports are compiled in.
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+] }
+
+# The `.inkforge` project file is a small JSON manifest followed by per-layer
+# PNG streams, so it needs both a serialiser and the raster codecs.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Native file open/save dialogs (Windows common dialogs, XDG portal on Linux).
+rfd = "0.15"
+
+# The pen path subclasses the app's window to read WM_POINTER messages, so it
+# needs the native window handle. (Already in the tree via eframe/winit.)
+[target.'cfg(target_os = "windows")'.dependencies]
+raw-window-handle = "0.6"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+strip = "symbols"
