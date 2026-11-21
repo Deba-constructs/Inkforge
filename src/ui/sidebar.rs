@@ -445,6 +445,20 @@ fn canvas_section(app: &mut InkforgeApp, ui: &mut egui::Ui) {
     section_header(ui, "Canvas");
 
     info_row(ui, "Size", &app.canvas.dimensions_label());
+    info_row(ui, "Resolution", &app.canvas.dpi_label());
+    let (mm_w, mm_h) = app.canvas.print_size_mm();
+    info_row(ui, "Print size", &format!("{mm_w:.1} × {mm_h:.1} mm"));
+    if app.canvas.bleed_px() > 0.0 {
+        info_row(
+            ui,
+            "Bleed / safe",
+            &format!(
+                "{:.1} / {:.1} mm",
+                app.canvas.bleed_mm(),
+                app.canvas.safe_mm()
+            ),
+        );
+    }
     info_row(ui, "Memory / layer", &format!("{:.1} MB", app.canvas.layer_memory_mb()));
 
     ui.add_space(6.0);

@@ -1,20 +1,9 @@
 //! Floating dialogs: New canvas, About, Keyboard shortcuts.
 
-use inkforge::egui::{
-    self, Align, Align2, CornerRadius, DragValue, Layout, Margin, RichText, Sense, Stroke, Vec2,
-};
+use inkforge::egui::{self, Align, Align2, Layout, RichText, Sense, Stroke, Vec2};
 
 use super::{theme, top_bar};
 use crate::app::{Dialog, InkforgeApp, PendingAction};
-use crate::engine::Background;
-
-/// Size presets offered in the New canvas dialog.
-const PRESETS: [(&str, u32, u32); 4] = [
-    ("1920 × 1080", 1920, 1080),
-    ("2480 × 3508 · A4 300 dpi", 2480, 3508),
-    ("3840 × 2160", 3840, 2160),
-    ("2048 × 2048", 2048, 2048),
-];
 
 const SHORTCUTS: [(&str, &str); 17] = [
     ("B / E / I / G / M / U / H", "Brush, eraser, colour picker, fill, selection, shapes, pan"),
@@ -38,7 +27,9 @@ const SHORTCUTS: [(&str, &str); 17] = [
 
 pub fn show(app: &mut InkforgeApp, ctx: &egui::Context) {
     match app.dialog.clone() {
-        Some(Dialog::NewCanvas) => new_canvas(app, ctx),
+        // The preset browser is a window of its own; it needs the preset
+        // library, which the other dialogs do not touch.
+        Some(Dialog::NewCanvas) => super::new_canvas::show(app, ctx),
         Some(Dialog::About) => about(app, ctx),
         Some(Dialog::Shortcuts) => shortcuts(app, ctx),
         Some(Dialog::Unsaved(action)) => unsaved(app, ctx, action),
@@ -215,140 +206,6 @@ fn notice(app: &mut InkforgeApp, ctx: &egui::Context, message: &str) {
         });
 
     if close || !window_open {
-        app.close_dialog();
-    }
-}
-
-fn new_canvas(app: &mut InkforgeApp, ctx: &egui::Context) {
-    let mut draft = app.new_canvas.clone();
-    let mut window_open = true;
-    let mut create = false;
-    let mut cancel = false;
-
-    egui::Window::new("New canvas")
-        .open(&mut window_open)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-        .show(ctx, |ui| {
-            ui.set_width(430.0);
-
-            ui.label(theme::section_title("Name"));
-            ui.add(
-                egui::TextEdit::singleline(&mut draft.name)
-                    .hint_text("Untitled")
-                    .desired_width(f32::INFINITY),
-            );
-
-            ui.add_space(10.0);
-            ui.label(theme::section_title("Presets"));
-            ui.horizontal_wrapped(|ui| {
-                for (label, width, height) in PRESETS {
-                    if ui.button(label).clicked() {
-                        draft.width = width;
-                        draft.height = height;
-                    }
-                }
-            });
-
-            ui.add_space(10.0);
-            ui.label(theme::section_title("Pixel size"));
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("W").size(11.0).color(theme::TEXT_MUTED));
-                ui.add(
-                    DragValue::new(&mut draft.width)
-                        .range(1..=20_000)
-                        .speed(8.0)
-                        .suffix(" px"),
-                );
-                ui.label(RichText::new("H").size(11.0).color(theme::TEXT_MUTED));
-                ui.add(
-                    DragValue::new(&mut draft.height)
-                        .range(1..=20_000)
-                        .speed(8.0)
-                        .suffix(" px"),
-                );
-                if ui.button("Swap").clicked() {
-                    std::mem::swap(&mut draft.width, &mut draft.height);
-                }
-            });
-
-            let megapixels = (draft.width as f32 * draft.height as f32) / 1_000_000.0;
-            let megabytes = megapixels * 4.0;
-            let heavy = megabytes > 512.0;
-            ui.label(
-                RichText::new(format!(
-                    "≈ {megapixels:.1} MP · ≈ {megabytes:.0} MB of memory per layer"
-                ))
-                .size(11.0)
-                .color(if heavy { theme::ACCENT } else { theme::TEXT_MUTED }),
-            );
-            if heavy {
-                ui.label(theme::pending_note(
-                    "Large canvases work but need plenty of free RAM.",
-                ));
-            }
-
-            ui.add_space(10.0);
-            ui.label(theme::section_title("Background"));
-            ui.horizontal(|ui| {
-                ui.radio_value(&mut draft.background, Background::White, "White");
-                ui.radio_value(
-                    &mut draft.background,
-                    Background::Transparent,
-                    "Transparent",
-                );
-                let custom = Background::Custom(draft.custom_color);
-                ui.radio_value(&mut draft.background, custom, "Custom");
-
-                if matches!(draft.background, Background::Custom(_)) {
-                    let mut colour = match draft.background {
-                        Background::Custom(colour) => colour,
-                        _ => draft.custom_color,
-                    };
-                    if egui::color_picker::color_edit_button_srgba(
-                        ui,
-                        &mut colour,
-                        egui::color_picker::Alpha::Opaque,
-                    )
-                    .changed()
-                    {
-                        draft.custom_color = colour;
-                        draft.background = Background::Custom(colour);
-                    }
-                }
-            });
-
-            if let Some(error) = &draft.error {
-                ui.add_space(8.0);
-                egui::Frame::NONE
-                    .fill(theme::with_alpha(theme::ACCENT, 26))
-                    .corner_radius(CornerRadius::same(6))
-                    .inner_margin(Margin::symmetric(8, 6))
-                    .show(ui, |ui| {
-                        ui.label(RichText::new(error).size(11.0).color(theme::ACCENT));
-                    });
-            }
-
-            ui.add_space(14.0);
-            ui.horizontal(|ui| {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.add(top_bar::accent_button("Create canvas")).clicked() {
-                        create = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        // Applied after the closure: `window_open` is borrowed by
-                        // `Window::open` for the duration of `show`.
-                        cancel = true;
-                    }
-                });
-            });
-        });
-
-    app.new_canvas = draft;
-    if create {
-        app.create_canvas();
-    } else if cancel || !window_open {
         app.close_dialog();
     }
 }

@@ -198,7 +198,11 @@ fn a_document_from_entries_rejects_impossible_sizes() {
     let error = Canvas::from_entries("Broken", 4_000_000, 10, Background::White, Vec::new(), 0)
         .err()
         .expect("size must be validated");
-    assert!(error.contains("outside the supported"), "got: {error}");
+    assert!(
+        error.contains("Canvas size must be between"),
+        "got: {error}"
+    );
+    assert!(error.contains("4000000"), "the failing size is named: {error}");
 }
 
 // ---- PNG and JPEG --------------------------------------------------------

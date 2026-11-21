@@ -36,7 +36,10 @@ pub const MAGIC: &[u8; 8] = b"INKFORGE";
 /// Version 2 adds an optional mask stream after each layer's pixels. Version 1
 /// files (no masks) still load; a version 1 build refuses a version 2 file
 /// instead of misreading the mask as the next layer.
-pub const FORMAT_VERSION: u32 = 2;
+///
+/// Version 3 adds the print setup: resolution, pixel aspect ratio, bleed and
+/// safe area. Those fields default, so every older project opens unchanged.
+pub const FORMAT_VERSION: u32 = 3;
 
 #[derive(Serialize, Deserialize)]
 struct Manifest {
@@ -46,6 +49,27 @@ struct Manifest {
     background: BackgroundDto,
     active: usize,
     entries: Vec<EntryDto>,
+    /// Dots per inch. Version 1 and 2 projects have no such field and open at
+    /// the default 72 dpi.
+    #[serde(default = "default_dpi")]
+    dpi: f32,
+    /// Pixel width divided by pixel height. Missing in older projects.
+    #[serde(default = "unit_aspect")]
+    pixel_aspect: f32,
+    /// Bleed included on each side of the canvas, in pixels.
+    #[serde(default)]
+    bleed: f32,
+    /// Safe-area margin inwards from the trim edge, in pixels.
+    #[serde(default)]
+    safe: f32,
+}
+
+fn default_dpi() -> f32 {
+    crate::engine::DEFAULT_DPI
+}
+
+fn unit_aspect() -> f32 {
+    1.0
 }
 
 #[derive(Serialize, Deserialize)]
@@ -235,6 +259,10 @@ pub fn save_project(path: &Path, canvas: &Canvas) -> Result<(), String> {
         background: canvas.background().into(),
         active: canvas.active_layer_index(),
         entries,
+        dpi: canvas.dpi(),
+        pixel_aspect: canvas.pixel_aspect(),
+        bleed: canvas.bleed_px(),
+        safe: canvas.safe_px(),
     };
 
     let json = serde_json::to_vec(&manifest)
@@ -379,14 +407,21 @@ pub fn load_project(path: &Path) -> Result<Canvas, String> {
         }
     }
 
-    Canvas::from_entries(
+    let mut canvas = Canvas::from_entries(
         manifest.name,
         width,
         height,
         manifest.background.into(),
         entries,
         manifest.active,
-    )
+    )?;
+    canvas.set_print_setup(
+        manifest.dpi,
+        manifest.pixel_aspect,
+        manifest.bleed,
+        manifest.safe,
+    );
+    Ok(canvas)
 }
 
 /// Encode one layer's pixels as a straight-alpha PNG stream.

@@ -3,12 +3,13 @@
 Living document: environment notes, milestone status, architecture decisions,
 verification log and outstanding work. Updated as milestones land.
 
-Last updated: Milestone 8 — the 1.4.0 Windows executable and portable ZIP were
-built, carrying its INKFORGE icon and version resource. Milestone 7 is still
-open (see §7); 1.1.0 added the full W3C blend set and clip to layer below,
-1.2.0 added a 43-brush library, live per-layer colour adjustments and
-document flips/rotations, 1.3.0 added non-destructive layer masks (project
-format version 2), and 1.4.0 adds layered OpenRaster (`.ora`) export.
+Last updated: Milestone 9 — the canvas preset system, print setup and the
+1.5.0 Windows package. Milestone 7 is still open (see §7); 1.1.0 added the full
+W3C blend set and clip to layer below, 1.2.0 added a 43-brush library, live
+per-layer colour adjustments and document flips/rotations, 1.3.0 added
+non-destructive layer masks (project format version 2), 1.4.0 added layered
+OpenRaster (`.ora`) export, and 1.5.0 adds 53 canvas presets, unit-aware sizes,
+print metadata and guides (project format version 3).
 
 ---
 
@@ -23,12 +24,12 @@ build):
 | Rust | rustc 1.100.0 (2026-11-09), cargo 1.100.0, installed with rustup (minimal profile) |
 | Crates.io access | Working; `eframe 0.37.0` and its dependency tree resolve and build |
 | Graphics stack available here | No X11/Wayland display and no `sudo` for dev packages, so the window can be compiled but **not launched** in this environment |
-| Windows build | No Windows host and no MSVC linker; the 1.4.0 executable was **cross-compiled on Linux** with `cargo zigbuild` (zig 0.13's bundled MinGW toolchain) for `x86_64-pc-windows-gnu` — see §6 |
+| Windows build | No Windows host and no MSVC linker; the 1.5.0 executable was **cross-compiled on Linux** with `cargo zigbuild` (zig 0.13's bundled MinGW toolchain) for `x86_64-pc-windows-gnu` — see §6 |
 | GUI toolkit | `eframe 0.37` (default renderer family: wgpu) with `egui 0.37` |
 
 **Consequence, stated plainly:** the project targets Windows and builds with
 `x86_64-pc-windows-msvc` on a Windows machine. This container has no Windows and
-no MSVC linker, so the 1.4.0 release was cross-compiled to
+no MSVC linker, so the 1.5.0 release was cross-compiled to
 `x86_64-pc-windows-gnu` with `cargo zigbuild` instead: a real 64-bit Windows GUI
 executable was produced and inspected (§5, §6), but it has **never been run**,
 because nothing here can execute a Windows binary. The clean-machine and artist
@@ -45,7 +46,8 @@ run (the rest of Milestone 8) still has to happen on Windows.
 | 5 | Undo/redo, selection, fill, shapes | **Done** (undo/redo landed early; rectangle selection, flood fill and line/rectangle/ellipse shapes added) |
 | 6 | PNG/JPEG import-export, native `.inkforge`, reliable save/load | **Done** (projects round-trip every layer, group and property; corrupt files are refused with a message; verified by tests, not by hand in the GUI) |
 | 7 | Interface refinement, performance, testing | **In progress** — live window title, recent projects, partial GPU uploads, threaded stamping and the composite tile pyramid landed; see §7 |
-| 8 | Windows release build, portable exe, ZIP, artist testing | **In progress** — 1.4.0 executable, portable folder and ZIP built and inspected; the icon and version resource are embedded and were read back out of the PE; running it on Windows and artist testing remain |
+| 8 | Windows release build, portable exe, ZIP, artist testing | **In progress** — 1.5.0 executable, portable folder and ZIP built and inspected; the icon and version resource are embedded and were read back out of the PE; running it on Windows and artist testing remain |
+| 9 | Canvas presets, print setup, guides | **Done in code** — 53 presets in seven categories, full unit/DPI/aspect/bleed/safe settings, a persisted preset library with favourites, recents, import/export and restore, PNG `pHYs`/`sRGB` metadata and project format version 3; verified by 35 automated tests, never looked at on a screen (§8) |
 
 ## 3. What is implemented so far
 
@@ -612,8 +614,64 @@ Landed so far; the remaining items are listed in §7.
   tips.
 
 Deliberately **not** implemented yet (and visibly disabled or labelled in the
-UI): nested groups, layer links, magic wand selection, custom user presets,
-canvas rotation, pen pressure.
+UI): nested groups, layer links, custom *brush* presets, perspective guides,
+an ICC-based colour pipeline, and CMYK / Grayscale / 16- and 32-bit canvases.
+
+### Milestone 9 — canvas presets and print setup (1.5.0)
+
+* **`io/canvas_presets.rs`** — the whole feature as data plus arithmetic:
+  `Category`, `Unit`, `CanvasPreset`, `CanvasSetup`, `PresetLibrary`, `Browse`
+  and `Sort`. It has no UI dependencies beyond `Color32`, so the window, the
+  document builder and the tests all use the same code.
+* **The catalog** is rebuilt on demand from a literal table (53 entries) rather
+  than read from disk, so a lost library file cannot take the presets with it.
+  Ids are stable strings (`print.a4`, `comic.webtoon`) because favourites and
+  recents refer to them.
+* **Print presets are authored in millimetres or inches**, not pixels, and
+  resolved by `unit_to_px` at 300 dpi with one rounding step: 210 mm becomes
+  2480.31 → 2480 px, exactly Photoshop's A4. The same function backs the size
+  fields, so a user typing 210 mm gets the identical number.
+* **Units and resolution are linked, not stored as text.** The document keeps
+  pixels and DPI; millimetres, centimetres and inches are projections of those
+  two numbers (`px_to_unit`, `unit_to_px`). Switching units cannot drift the
+  canvas because nothing is kept in the display unit.
+* **Bleed enlarges the canvas.** `CanvasSetup::canvas_size_px` adds
+  `round(bleed_px)` on every side and `Canvas::set_print_setup` stores the bleed
+  so the trim line can be drawn inwards by it. A 3 mm bleed on A4 therefore
+  creates 2550 × 3578 px with the trim at 35 px. This is the printable-file
+  convention (art must reach past the trim), and it is stated in the window and
+  the limitations rather than being implicit.
+* **Validation happens before allocation.** `validate_canvas_size` enforces
+  16–20 000 px per side and 200 MP total; `Canvas::try_new` and
+  `Canvas::from_entries` both call it, so the window, the project loader and the
+  tests share one rule. 20 000 px per side alone would allow 400 MP, which is
+  why the area limit exists separately (800 MB per layer).
+* **The project format grew to version 3** with four `#[serde(default)]`
+  fields — `dpi`, `pixel_aspect`, `bleed`, `safe`. Version 1 and 2 files open
+  with 72 dpi and no guides; an older build refuses a version 3 file through the
+  existing version check.
+* **PNG metadata (`io/png.rs`)** — the `image` crate writes a bare PNG, so
+  `encode_rgba` inserts `sRGB` and `pHYs` chunks directly after `IHDR`, with
+  their own CRC-32 (the same table the ZIP writer uses). `pHYs` carries the
+  document's DPI as pixels per metre, with separate x and y densities when the
+  pixel aspect is not square. The OpenRaster merged image gets the same metadata.
+* **The preset library** is `canvas-presets.json` in INKFORGE's data folder:
+  custom presets, favourite ids and the last ten used presets. Loading is
+  tolerant (a damaged file silently yields the built-ins, like the recent list);
+  saving reports a failure in the status line, so a read-only data folder cannot
+  block painting. Imported presets whose id already exists are stored alongside
+  with a fresh id instead of overwriting.
+* **The window** (`ui/new_canvas.rs`) keeps the draft in `NewCanvasState` and
+  performs library actions after the frame, because the library is borrowed to
+  build the card list while the window is drawn. Cards are painted by hand so
+  each shows the preset's real proportions; the star is hit-tested separately
+  from the card; arrows walk the list and scroll the selected card into view.
+* **Guides and rulers** (`ui/canvas_view.rs`) take their ruler strips out of the
+  central panel rather than painting over the page, read the same `Viewport`
+  mapping as the pointer, and pick a 1/2/5/10/… step that leaves room for the
+  labels. The grid, trim line, safe area and trim marks all go through
+  `PageView::point`, so they follow canvas rotation even though the rulers hide
+  while it is turned.
 
 ## 4. Architecture notes and deviations from the suggested tree
 
@@ -674,7 +732,7 @@ canvas rotation, pen pressure.
 | Check | Command | Result |
 | --- | --- | --- |
 | Type/compile check, all targets | `cargo check --all-targets` | Passes, 0 errors, 0 warnings |
-| Tests | `cargo test` | Passes — 289 tests, 0 failures (exit 0): 9 model/viewport/brush/transform, 7 painting, 39 layers/groups, 7 layer alpha lock, 16 blend modes, 9 clipping, 12 layer masks, 16 colour adjustments, 8 history, 7 presets, 6 stabiliser, 50 selection/fill/shapes, 16 headless UI, 9 file I/O, 12 OpenRaster export, 7 autosave/recovery, 7 recent projects, 11 tile pyramid, 7 surface and stamping performance, 1 pool dispatch, 9 pen pressure/tilt, 2 Win32 pointer layouts, 10 canvas rotation, 8 document transforms |
+| Tests | `cargo test --all-targets` | Passes — 326 tests, 0 failures (exit 0), including 20 new in-crate unit tests (unit conversion, validation, aspect maths, the preset library, PNG chunk writing) and 15 new canvas-preset integration tests. The rest of the breakdown: 7 painting, 39 layers/groups, 7 layer alpha lock, 16 blend modes, 9 clipping, 12 layer masks, 16 colour adjustments, 8 history, 7 brush presets, 6 stabiliser, 50 selection/fill/shapes, 18 headless UI, 9 file I/O, 12 OpenRaster export, 7 autosave/recovery, 7 recent projects, 11 tile pyramid, 7 performance, 9 pen pressure/tilt, 2 Win32 pointer layouts, 10 canvas rotation, 8 document transforms |
 | Canvas rotation | `cargo test --test view_rotation` | A fresh view is upright; a quarter turn sends the page corners where they look like they go; screen and canvas stay exact inverses at eight angles with zoom and pan applied; cursor-anchored zoom on a turned view does not drift; angles accumulate and wrap into (-180°, 180°]; 1.5° near a quarter turn snaps onto it while a deliberate 0.5 rad is left alone; reset and NaN/infinite input behave; a turned landscape page fits into the window height (0.528 at 1000 × 600) instead of the width; the page rectangle itself is not turned. The turned *rendering* has not been looked at — no display here (§8) |
 | Pen pressure and tilt | `cargo test --test pen` and `cargo test --lib pointer` | A mouse leaves the brush exactly as configured; half pressure paints fainter *and* narrower (a dab's footprint stops short of where full pressure reaches); a feather touch still leaves a line above `MIN_DAB_RADIUS`; 60° of tilt widens a 20 px tip to 26 px without changing opacity, and never pushes the brush past `MAX_SIZE`; 0% amounts and the off switch ignore the pen entirely; a NaN/infinite reading falls back to full pressure; a real stroke driven through `begin_stroke`/`extend_stroke` covers 18 px above its path at full pressure but not at 25%; and the Win32 `POINTER_INFO` / `POINTER_PEN_INFO` sizes and field offsets match the 64-bit SDK. The tablet path itself has **not** run — no pen and no Windows here (§8) |
 | Start state | `cargo test --test ui_smoke` | An untouched canvas paints the "Start painting" card, a simulated drag removes it, and undoing the only stroke brings it back (proving the cached empty check follows the composite revision) |
@@ -699,14 +757,15 @@ canvas rotation, pen pressure.
 | Selection, fill, shapes | `cargo test --test editing` | Selection normalising and clamping, click-sized drags rejected, painting clipped at the selection edge, select all/clear, fill covering only the matching area, fill clipped to the selection and undoable, fill selection, line/rectangle/ellipse geometry, shapes clipped, selection drag and one-step shape commit through the app, lasso polygon coverage, feather coverage ramps, painting and filling clipped to a lasso, soft edges when painting a feathered selection, a lasso drag through the app, a wand selecting only the connected block it was clicked in (with a boundary outline), its tolerance widening the region to the neighbouring shade at 24 but not at 0, painting following a wand region's shape rather than its bounding box, a feathered wand fading at its edge, the wand mode selecting through the app, growing a rectangle by 4 px on every side and shrinking it back exactly, a 3 × 3 selection shrinking away entirely, growth stopping at the canvas edge, dragging the Grow / shrink slider being relative to the drag's start rather than cumulative, the slider reaching an empty selection and a selection that shrinks away, inverting a rectangle into a canvas-wide hole, feathering surviving an invert, a double invert returning the original, a full-canvas invert leaving nothing, the Invert button through the app, a feathered selection gaining tinted soft-edge spans that stay inside it and skip the fully selected middle, hard selections gaining none, the band surviving both grow and shrink, a hard selection's Quick mask being one solid wash over its bounds, a feathered Quick mask fading to a weaker edge, the wash being cached rather than rebuilt, the Quick mask toggle reporting its state, `Q` toggling the wash through the frame path, brush strokes adding coverage to the mask (inside and outside the old selection, growing its bounds), the eraser removing coverage, a mask stroke leaving every layer pixel untouched and writing no history entry, painting with nothing selected creating a selection, an eraser stroke that clears the last coverage clearing the selection, a painted mask regaining its pixel-edge outline when the stroke ends, and the brush painting the layer again once the Quick mask is off |
 | File I/O | `cargo test --test io` | A project with two layers, a group, a blend mode, opacity, names, group membership and painted pixels round-trips through save/load unchanged; damaged files (bad magic, truncation, a future version, a missing file) are refused with readable messages; an impossible canvas size is rejected; a PNG export reopens as a document with the same pixels; a JPEG export is readable and composites transparency onto white; an imported image becomes a cropped layer above the active one; a text file named `.png` fails cleanly |
 | OpenRaster export | `cargo test --test ora` | An archive with the required layout — `mimetype` first, stored and exact, then `stack.xml`, `mergedimage.png`, `Thumbnails/thumbnail.png` and one `data/layerN.png` per layer — read back by an independent stored-ZIP reader that checks both header sets and every CRC; a 600 × 300 document getting a 256 × 128 thumbnail; layers, groups, names, opacity, visibility and all blend modes reaching `stack.xml` as SVG compositing names with XML-escaped names (`&amp;`, `&quot;`, `&lt;`); the top layer written first; a layer's exported pixels matching its paint; a mask and a live adjustment baked into the exported PNG while the in-memory layer keeps both editable; `mergedimage.png` byte-identical to a PNG export of the same document; a group's opacity and visibility surviving as stack attributes; an unwritable path reported cleanly; and a single-layer document still writing exactly one stream |
+| Canvas presets | `cargo test --test canvas_presets` and `cargo test --lib canvas_presets` | All 53 documented presets exist with exactly the documented pixel sizes (measured A4 2480 × 3508, US Letter 2550 × 3300, A0 9933 × 14043, Poster 5400 × 7200), every category is populated and every id is unique; print presets carry 300 dpi and convert 210 mm / 8.5 in to the published pixel counts; pixels ↔ mm / cm / in round-trip within one pixel; the same 210 mm doubles in pixels when the DPI doubles; 1 inch is 25.4 mm and 300 px at 300 dpi; aspect labels read as 3:4, 9:16 and 12:17 for A4; the aspect lock and the ratio chips reshape the canvas; impossible sizes (too small, 0 dpi, 400 MP) are refused while a webtoon page passes; a document built from A4 with 3 mm bleed and 10 mm safe area is 2550 × 3578 px with the right guides, a transparent background and a Sketch layer, and starts unmodified; black is stored as black rather than a custom colour; the library filters by category and search, sorts by name and size (A0 first), follows favourites, floats the recently used preset to the top, survives a restart through `canvas-presets.json`, updates and deletes custom presets, restores the defaults without losing the built-ins, and exports/imports a preset file without colliding ids; creating a canvas from the window applies size, DPI, background and sketch layer and records the preset in the recents; a hand-typed size is recorded as a custom recent; a project round-trips dpi / pixel aspect / bleed / safe area; and a PNG export carries `pHYs` 11811 pixels per metre (300 dpi) plus an `sRGB` chunk |
 | Autosave and recovery | `cargo test --test recovery` | Unsaved work is written to the slot with its name, size and pixels intact; a clean document writes nothing; a simulated crash leaves a copy that the next session offers, and recovering restores the artwork as unsaved work and refreshes the copy; discard deletes the slot; keep-for-later leaves it; a damaged slot is reported through the error dialog and not deleted; one real frame tick performs the autosave; a plain session has autosave off |
-| Headless UI render | `cargo test --test ui_smoke` | Workspace, canvas, tool rail/sidebar hiding, a group row expanded and collapsed, an empty folder painting its "drag a layer onto this folder" line and dropping that line once a layer lands, a folder row and a layer row each renamed in place painting their draft names, the field opening with the name pre-selected, and giving the old name back on cancel, typing in the properties Name box renaming a layer row and a folder row live while the document stays untouched and then committing as one undo step, a selection drag through the frame path with the dashed overlay, and all five dialog states (new canvas, unsaved changes, file error, about, shortcuts) run egui passes at 1440×900 and at the 900×560 minimum size with no panic and real paint output |
+| Headless UI render | `cargo test --test ui_smoke` | Workspace, canvas, tool rail/sidebar hiding, a group row expanded and collapsed, an empty folder painting its "drag a layer onto this folder" line and dropping that line once a layer lands, a folder row and a layer row each renamed in place painting their draft names, the field opening with the name pre-selected, and giving the old name back on cancel, typing in the properties Name box renaming a layer row and a folder row live while the document stays untouched and then committing as one undo step, a selection drag through the frame path with the dashed overlay, all five dialog states (new canvas, unsaved changes, file error, about, shortcuts) run egui passes at 1440×900 and at the 900×560 minimum size with no panic and real paint output; the New canvas window renders its presets in all three scopes (all, favourites, recent) and in the narrow stacked layout at 900×560, including a search with no matches; and the workspace with rulers, grid, trim marks and bleed/safe guides on paints without panicking |
 | Pointer painting (headless) | `cargo test --test ui_smoke` | A simulated press → move → release over the canvas paints real pixels, marks the document modified and ends the stroke |
 | Undo shortcuts (headless) | `cargo test --test ui_smoke` | After a simulated stroke, a synthetic `Ctrl+Z` removes all paint, the redo stack fills, and `Ctrl+Y` restores the stroke — driven through `InkforgeApp::frame`, the same code path the window uses |
 | Application launch | `cargo run` | **Not possible here** (headless Linux container, no display server) |
-| Windows release build | `cargo zigbuild --release --target x86_64-pc-windows-gnu` | **Passes** (1.4.0, exit 0, 35 s warm): a GUI-subsystem PE32+ x86-64 executable, 12.3 MB, imports only DLLs that ship with Windows 10/11 (`kernel32`, `user32`, `gdi32`, `ole32`, `dxgi`, `dwmapi`, `uxtheme`, `bcryptprimitives`, `api-ms-win-crt-*`) — no VCRUNTIME, MSVCP or libgcc/libstdc++ DLL. The only warning is zig's own libunwind `dllexport` redeclaration, from the toolchain |
-| Portable ZIP | `scripts/package-windows-cross.sh` | **Passes**: `dist/INKFORGE-1.4.0-windows-x86_64/` holds `INKFORGE.exe` (12 916 736 bytes), `README.txt` and `LICENSE-MIT.txt`; the ZIP is 5 657 833 bytes (5.4 MB) and unpacks to exactly those files |
-| Icon and version metadata in the PE | pefile over `target/x86_64-pc-windows-gnu/release/inkforge.exe` | **Passes, as a file read**: the resource directory holds seven `RT_ICON` images (1 128–33 066 bytes: the 16/24/32/48/64 px bitmaps and the 128/256 px PNGs), one `RT_GROUP_ICON`, and an `RT_VERSION` block whose `VS_FIXEDFILEINFO` has signature `0xFEEF04BD`, file and product version `1.4.0.0`, `VOS_NT_WINDOWS32` and `VFT_APP`; all eight string fields are present (`ProductName` INKFORGE, `FileDescription` "INKFORGE - a digital painting application for artists", `CompanyName`, `FileVersion` 1.4.0, `InternalName`, `LegalCopyright`, `OriginalFilename` INKFORGE.exe, `ProductVersion`). Explorer and Task Manager were **not** opened to look at it (§8) |
+| Windows release build | `cargo zigbuild --release --target x86_64-pc-windows-gnu` | **Passes** (1.5.0, exit 0, 42 s warm): a GUI-subsystem PE32+ x86-64 executable, 12.6 MB, imports only DLLs that ship with Windows 10/11 (`kernel32`, `user32`, `gdi32`, `ole32`, `dxgi`, `dwmapi`, `uxtheme`, `bcryptprimitives`, `api-ms-win-crt-*`) — no VCRUNTIME, MSVCP or libgcc/libstdc++ DLL. The only warning is zig's own libunwind `dllexport` redeclaration, from the toolchain |
+| Portable ZIP | `scripts/package-windows-cross.sh` | **Passes**: `dist/INKFORGE-1.5.0-windows-x86_64/` holds `INKFORGE.exe` (13 228 544 bytes), `README.txt` and `LICENSE-MIT.txt`; the ZIP is 5 777 776 bytes (5.5 MB), passes Python `zipfile.testzip()`, and unpacks to exactly those files |
+| Icon and version metadata in the PE | pefile over `target/x86_64-pc-windows-gnu/release/inkforge.exe` | **Passes, as a file read**: the resource directory holds seven `RT_ICON` images (1 128–33 066 bytes: the 16/24/32/48/64 px bitmaps and the 128/256 px PNGs), one `RT_GROUP_ICON`, and an `RT_VERSION` block whose `VS_FIXEDFILEINFO` has signature `0xFEEF04BD`, file and product version `1.5.0.0`, `VOS_NT_WINDOWS32` and `VFT_APP`; all eight string fields are present (`ProductName` INKFORGE, `FileDescription` "INKFORGE - a digital painting application for artists", `CompanyName`, `FileVersion` 1.5.0, `InternalName`, `LegalCopyright`, `OriginalFilename` INKFORGE.exe, `ProductVersion`). Explorer and Task Manager were **not** opened to look at it (§8) |
 | Running the release on Windows | double-click `INKFORGE.exe` | **Not possible here** (Linux, no Windows, no display); the executable has never been launched — see §8 |
 
 What is therefore verified: the code compiles cleanly against the real
@@ -744,10 +803,11 @@ stroke, and is undone and redone by Ctrl+Z / Ctrl+Y.
   another layer independently, and there is no mask density or feather control.
   While mask editing is on, flood fill and shapes refuse with a message instead
   of silently painting the layer; the brush and eraser are the mask tools.
-  Mask documents are project format version 2, so 1.1.0/1.2.0 builds refuse
-  them (with a "newer INKFORGE" message) rather than misreading the streams;
-  version 1 projects still open in 1.4.0. A mask is a full canvas buffer, so it
-  costs one extra canvas image of memory per masked layer.
+  Mask documents are project format version 2 (and print documents version 3),
+  so older builds refuse them (with a "newer INKFORGE" message) rather than
+  misreading the streams; version 1 and 2 projects still open in 1.5.0, at
+  72 dpi with no guides. A mask is a full canvas buffer, so it costs one extra
+  canvas image of memory per masked layer.
 * Layer-mask rendering has been verified at the composite level and through
   save/load, never by eye on a screen (§8).
 * The 43 brush presets are parameter sets the existing rasteriser understands:
@@ -848,10 +908,34 @@ stroke, and is undone and redone by Ctrl+Z / Ctrl+Y.
 * The native file dialogs (`rfd`) could not be opened in this headless
   container, so the picker itself — only the read/write code behind it — is
   unverified until the app runs on a desktop.
-* No pen pressure/tilt; pointer position only.
-* No canvas rotation yet.
-* The 1.4.0 Windows package was cross-compiled on Linux and verified only as a
-  file: 64-bit, GUI subsystem, system-only imports, 12.3 MB. It has never been
+* The New canvas window, the preset cards, the star buttons, the rulers and
+  every guide are covered by headless egui passes and by tests of the model
+  behind them, but they have **not been looked at on a screen**. Card sizing,
+  the two-column fallback below 940 px, ruler label density at very small and
+  very large zooms, and whether the amber trim line reads clearly over light
+  artwork are the parts most likely to need a visual pass (§8).
+* Only 8-bit RGB (sRGB) canvases exist. CMYK, Grayscale and 16/32-bit depth are
+  not offered, because the compositing engine is 8-bit RGBA; the window states
+  this instead of showing controls that would do nothing. There is no ICC
+  profile selection, and PNG exports declare sRGB rather than embedding a
+  profile.
+* There are no perspective guides or vanishing-point assistants, and nothing
+  snaps to the grid or to the print guides — they are measurement overlays.
+* Rulers are hidden while the canvas is turned. The grid, trim line, safe area
+  and trim marks still follow the rotation because they are drawn through the
+  same page transform as the tiles.
+* Bleed enlarges the created canvas (3 mm per side on A4 is 35 px per side),
+  which is the print-file convention but differs from Photoshop's New Document
+  dialog, where the canvas stays at trim size. Safe area is measured inwards
+  from the trim line, not the canvas edge.
+* The New canvas window's printed size in inches and millimetres is computed
+  from the DPI and the pixel aspect; it does not read an ICC profile's intended
+  display size because there is no ICC support.
+* Importing a PNG does not read its `pHYs` chunk, so an opened image becomes a
+  72 dpi document even if the file declared another resolution. Exported PNGs
+  do carry `pHYs` and `sRGB`.
+* The 1.5.0 Windows package was cross-compiled on Linux and verified only as a
+  file: 64-bit, GUI subsystem, system-only imports, 12.6 MB. It has never been
   executed, so its GPU initialisation, window creation, fonts and file dialogs
   on Windows are all unconfirmed — as is anything about how it looks at a given
   DPI. The first launch on a Windows machine is the real test (Milestone 8).
@@ -859,7 +943,7 @@ stroke, and is undone and redone by Ctrl+Z / Ctrl+Y.
   PE, not by looking at Windows: the `.ico` images and the `VERSIONINFO` strings
   are present and correct, but how Explorer, the task bar and Task Manager draw
   them at a given DPI, and whether the icon reads well at 16 px on a real
-  desktop, have not been seen. The About dialog shows the same 1.4.0 from the
+  desktop, have not been seen. The About dialog shows the same 1.5.0 from the
   compiled-in crate version.
 * The ZIP is unsigned. A downloaded copy will raise a SmartScreen warning on
   first run unless it is code-signed, which it is not.
@@ -933,7 +1017,7 @@ The icon is drawn by `python3 scripts/make-icon.py`, which writes
 
 ### 6b. Cross-compiling the release from Linux
 
-This is how 1.4.0 was actually produced here, since the container has no
+This is how 1.5.0 was actually produced here, since the container has no
 Windows and no MSVC linker:
 
 ```bash
@@ -980,17 +1064,24 @@ Milestone 7, remaining:
 3. Wider test coverage of the UI paths added in Milestone 6 (save prompts,
    keyboard shortcuts, error dialogs) and a pass over DEVELOPMENT.md to keep it
    current.
+4. A visual pass over the New canvas window: the 53 cards, the star buttons,
+   the narrow two-column layout, and ruler label density at extreme zooms.
+5. Higher colour depth and a real colour-management path (16-bit surfaces, ICC
+   profiles, CMYK and Grayscale modes) if the artist needs print colour
+   accuracy; today the window says plainly that only 8-bit RGB exists.
+6. Perspective guides and snapping, which would be assistants over the
+   existing viewport rather than measurement overlays.
 
 Milestone 8, remaining:
 
-4. Run the packaged `INKFORGE.exe` on a clean Windows 10/11 machine (no Rust, no
+7. Run the packaged `INKFORGE.exe` on a clean Windows 10/11 machine (no Rust, no
    Visual C++ redistributable) and on the artist's machine; confirm the window
    opens, the GPU path initialises, painting feels right and saving/opening a
    project works by hand. Nothing in §5 covers this.
-5. Code-signing, if the artist intends to distribute the ZIP publicly;
+8. Code-signing, if the artist intends to distribute the ZIP publicly;
    Windows SmartScreen will otherwise warn on first run of an unsigned
    download.
-6. Connect a drawing tablet to the Windows build: a stroke should thin with
+9. Connect a drawing tablet to the Windows build: a stroke should thin with
    pressure and widen with tilt, the sidebar should show a live reading, and the
    pen should still drive every tool through the mouse messages. This is
    unverified hardware code (§5, §8 limitations).

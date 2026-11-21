@@ -47,10 +47,47 @@ fn paint_locked_pixel(destination: Color32, colour: Color32, coverage: f32) -> C
 
 /// Smallest allowed canvas edge, in pixels.
 pub const MIN_CANVAS_DIM: u32 = 16;
-/// Largest allowed canvas edge, in pixels. Chosen so a handful of RGBA layers
-/// stays inside a few gigabytes of RAM; larger sizes are rejected with a clear
-/// message.
-pub const MAX_CANVAS_DIM: u32 = 10_000;
+/// Largest allowed canvas edge, in pixels.
+///
+/// Tall print and web-comic pages are legitimate (an A0 page at 300 dpi is
+/// 9933 × 14043 px, a webtoon episode 800 × 12800 px), so the edge limit is
+/// generous and the real guard is the area limit below.
+pub const MAX_CANVAS_DIM: u32 = 20_000;
+/// Largest allowed canvas area, in pixels.
+///
+/// Every layer is a full-canvas RGBA surface, so 200 MP is 800 MB per layer.
+/// Anything past this is refused before a single buffer is allocated, which is
+/// what turns "my machine froze" into a readable error message.
+pub const MAX_CANVAS_PIXELS: u64 = 200_000_000;
+
+/// Check a pixel size against both limits without allocating anything.
+///
+/// The "New canvas" window calls this before creating the document, so an
+/// impossible size is reported inline instead of aborting on a failed
+/// allocation.
+pub fn validate_canvas_size(width: u32, height: u32) -> Result<(), String> {
+    if !(MIN_CANVAS_DIM..=MAX_CANVAS_DIM).contains(&width)
+        || !(MIN_CANVAS_DIM..=MAX_CANVAS_DIM).contains(&height)
+    {
+        return Err(format!(
+            "Canvas size must be between {MIN_CANVAS_DIM} and {MAX_CANVAS_DIM} pixels \
+             on each side (got {width} × {height})."
+        ));
+    }
+
+    let pixels = width as u64 * height as u64;
+    if pixels > MAX_CANVAS_PIXELS {
+        let megapixels = pixels as f64 / 1_000_000.0;
+        return Err(format!(
+            "{width} × {height} px is {megapixels:.0} megapixels, over the \
+             {:.0} megapixel limit (about 800 MB per layer). Reduce the size or \
+             the resolution.",
+            MAX_CANVAS_PIXELS as f64 / 1_000_000.0
+        ));
+    }
+
+    Ok(())
+}
 
 /// What sits underneath the artwork.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,7 +134,27 @@ pub struct Canvas {
     /// Editing selection; clips painting, erasing, filling and shapes.
     selection: Option<Selection>,
     modified: bool,
+    /// Physical resolution. The engine works in pixels; this is the bridge to
+    /// print sizes, the PNG `pHYs` chunk and physical ruler units.
+    dpi: f32,
+    /// Width of one pixel relative to its height. 1.0 is square pixels; 2.0
+    /// means every pixel is twice as wide as it is tall (anamorphic video).
+    pixel_aspect: f32,
+    /// Bleed, in pixels, included on every side of the canvas for print work.
+    bleed_px: f32,
+    /// Safe-area margin, in pixels, measured inwards from the trim edge.
+    safe_px: f32,
 }
+
+/// Default resolution for documents that do not carry one (screen artwork and
+/// every project written before version 3 of the format).
+pub const DEFAULT_DPI: f32 = 72.0;
+/// Widest resolution the document model accepts, in dots per inch.
+pub const MAX_DPI: f32 = 2_400.0;
+/// Smallest accepted pixel aspect ratio.
+pub const MIN_PIXEL_ASPECT: f32 = 0.1;
+/// Largest accepted pixel aspect ratio.
+pub const MAX_PIXEL_ASPECT: f32 = 10.0;
 
 impl Canvas {
     /// The artwork opened on first launch.
@@ -114,6 +171,10 @@ impl Canvas {
             stack: LayerStack::new(width, height),
             selection: None,
             modified: false,
+            dpi: DEFAULT_DPI,
+            pixel_aspect: 1.0,
+            bleed_px: 0.0,
+            safe_px: 0.0,
         }
     }
 
@@ -127,14 +188,7 @@ impl Canvas {
         height: u32,
         background: Background,
     ) -> Result<Self, String> {
-        if !(MIN_CANVAS_DIM..=MAX_CANVAS_DIM).contains(&width)
-            || !(MIN_CANVAS_DIM..=MAX_CANVAS_DIM).contains(&height)
-        {
-            return Err(format!(
-                "Canvas size must be between {MIN_CANVAS_DIM} and {MAX_CANVAS_DIM} pixels \
-                 on each side (got {width} × {height})."
-            ));
-        }
+        validate_canvas_size(width, height)?;
 
         let name = name.into();
         let name = if name.trim().is_empty() {
@@ -167,14 +221,8 @@ impl Canvas {
         entries: Vec<Entry>,
         active: usize,
     ) -> Result<Self, String> {
-        if !(MIN_CANVAS_DIM..=MAX_CANVAS_DIM).contains(&width)
-            || !(MIN_CANVAS_DIM..=MAX_CANVAS_DIM).contains(&height)
-        {
-            return Err(format!(
-                "The document is {width} × {height} px, outside the supported \
-                 {MIN_CANVAS_DIM}–{MAX_CANVAS_DIM} px range."
-            ));
-        }
+        validate_canvas_size(width, height)
+            .map_err(|error| format!("The document cannot be reopened. {error}"))?;
         if entries.is_empty() {
             return Err(String::from("The document contains no layers."));
         }
@@ -194,7 +242,88 @@ impl Canvas {
             stack: LayerStack::from_entries(width, height, entries, active),
             selection: None,
             modified: false,
+            dpi: DEFAULT_DPI,
+            pixel_aspect: 1.0,
+            bleed_px: 0.0,
+            safe_px: 0.0,
         })
+    }
+
+    // ---- print setup ----------------------------------------------------
+
+    /// Resolution in dots (pixels) per inch.
+    pub fn dpi(&self) -> f32 {
+        self.dpi
+    }
+
+    /// Width of one pixel relative to its height (1.0 = square).
+    pub fn pixel_aspect(&self) -> f32 {
+        self.pixel_aspect
+    }
+
+    /// Bleed included around the trim edge, in pixels.
+    pub fn bleed_px(&self) -> f32 {
+        self.bleed_px
+    }
+
+    /// Safe-area margin measured inwards from the trim edge, in pixels.
+    pub fn safe_px(&self) -> f32 {
+        self.safe_px
+    }
+
+    /// Install the print setup loaded from a project or chosen at creation.
+    ///
+    /// Values are clamped rather than rejected: a project should still open if
+    /// a hand-edited manifest carries a nonsense resolution. This is document
+    /// metadata, not artwork, so it does not mark the document modified.
+    pub fn set_print_setup(&mut self, dpi: f32, pixel_aspect: f32, bleed_px: f32, safe_px: f32) {
+        self.dpi = if dpi.is_finite() {
+            dpi.clamp(1.0, MAX_DPI)
+        } else {
+            DEFAULT_DPI
+        };
+        self.pixel_aspect = if pixel_aspect.is_finite() {
+            pixel_aspect.clamp(MIN_PIXEL_ASPECT, MAX_PIXEL_ASPECT)
+        } else {
+            1.0
+        };
+        let limit = self.width.min(self.height) as f32 / 2.0;
+        self.bleed_px = if bleed_px.is_finite() {
+            bleed_px.clamp(0.0, limit)
+        } else {
+            0.0
+        };
+        self.safe_px = if safe_px.is_finite() {
+            safe_px.clamp(0.0, limit)
+        } else {
+            0.0
+        };
+    }
+
+    /// Physical size of the artwork at its resolution, in millimetres.
+    ///
+    /// A pixel is `pixel_aspect` times wider than it is tall, so the horizontal
+    /// size uses the same density for both axes but a stretched pixel width.
+    pub fn print_size_mm(&self) -> (f32, f32) {
+        let dpi = self.dpi.max(1.0);
+        let width = self.width as f32 * self.pixel_aspect / dpi * 25.4;
+        let height = self.height as f32 / dpi * 25.4;
+        (width, height)
+    }
+
+    /// Bleed in millimetres, for display.
+    pub fn bleed_mm(&self) -> f32 {
+        self.bleed_px / self.dpi.max(1.0) * 25.4
+    }
+
+    /// Safe-area margin in millimetres, for display.
+    pub fn safe_mm(&self) -> f32 {
+        self.safe_px / self.dpi.max(1.0) * 25.4
+    }
+
+    /// e.g. `"300 dpi"`.
+    pub fn dpi_label(&self) -> String {
+        format!("{:.0} dpi", self.dpi)
     }
 
     /// Forget unsaved changes, e.g. right after a successful save.
@@ -884,6 +1013,22 @@ impl Canvas {
     /// e.g. `"1920 × 1080 px"`.
     pub fn dimensions_label(&self) -> String {
         format!("{} × {} px", self.width, self.height)
+    }
+
+    /// e.g. `"1920 × 1080 px · 72 dpi"`, for the status bar and title.
+    pub fn resolution_label(&self) -> String {
+        format!("{} × {} px · {}", self.width, self.height, self.dpi_label())
+    }
+
+    /// An added layer named like a sketch layer, for documents created with
+    /// "start with a sketch layer" on.
+    pub fn add_sketch_layer(&mut self) {
+        let (_, layer) = self.layer_add_above_active();
+        let id = layer.id();
+        if let Some(mut props) = self.layer_props(id) {
+            props.name = String::from("Sketch");
+            self.set_layer_props(id, props);
+        }
     }
 
     /// Rough memory cost of one RGBA surface, in mebibytes.

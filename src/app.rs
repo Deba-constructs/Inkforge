@@ -10,13 +10,21 @@ use std::time::{Duration, Instant};
 use inkforge::egui::{Color32, Context, Key, Modifiers, Pos2, ViewportCommand};
 
 use crate::engine::{
-    Background, BrushDab, BrushSettings, Canvas, PenSample, PenSettings, PixelRegion, Selection,
-    SelectionMode, ShapeKind, Stabilizer, ThumbnailCache, TilePyramid, Viewport, MAX_FEATHER,
+    BrushDab, BrushSettings, Canvas, PenSample, PenSettings, PixelRegion, Selection, SelectionMode,
+    ShapeKind, Stabilizer, ThumbnailCache, TilePyramid, Viewport, MAX_FEATHER,
 };
 use crate::history::{Edit, History, Recorder};
-use crate::io::{self, recent, recovery, ImageFormat, RecoveryInfo};
+use crate::io::{
+    self, recent, recovery, Browse, CanvasSetup, Category, ImageFormat, PresetLibrary, RecoveryInfo,
+    Scope, Sort, Unit,
+};
 use crate::layers::{Adjustment, BlendMode, Entry, GroupProps, LayerId, LayerProps};
 use crate::ui;
+
+/// Bleed shown in millimetres, with the millimetre figure the artist entered.
+fn bleed_label(canvas: &Canvas) -> String {
+    format!("{:.1} mm", canvas.bleed_mm())
+}
 
 /// The painting tools in the left rail.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -130,26 +138,62 @@ pub enum PendingAction {
     Quit,
 }
 
-/// Working state of the "New canvas" dialog.
+/// Working state of the "New canvas" window: the canvas settings plus the
+/// preset browser's own state (which list is showing, the search text, the name
+/// field used when saving a preset).
 #[derive(Clone, Debug)]
 pub struct NewCanvasState {
-    pub name: String,
-    pub width: u32,
-    pub height: u32,
-    pub background: Background,
-    pub custom_color: Color32,
+    pub setup: CanvasSetup,
+    pub scope: Scope,
+    /// Category filter; `None` shows every category.
+    pub category: Option<Category>,
+    pub search: String,
+    pub sort: Sort,
+    /// Custom preset being edited, so saving updates it instead of adding one.
+    pub editing: Option<String>,
+    /// Text in the "save as preset" name field.
+    pub preset_name: String,
+    /// Preset highlighted by the keyboard or last clicked.
+    pub selected: Option<String>,
+    /// Validation message shown under the size fields.
     pub error: Option<String>,
+    /// Result of a preset action, shown in the footer.
+    pub notice: Option<String>,
 }
 
 impl Default for NewCanvasState {
     fn default() -> Self {
         Self {
-            name: String::from("Untitled"),
-            width: 1920,
-            height: 1080,
-            background: Background::White,
-            custom_color: Color32::from_rgb(0xF2, 0xEF, 0xE6),
+            setup: CanvasSetup::default(),
+            scope: Scope::All,
+            category: None,
+            search: String::new(),
+            sort: Sort::Category,
+            editing: None,
+            preset_name: String::new(),
+            selected: None,
             error: None,
+            notice: None,
+        }
+    }
+}
+
+impl NewCanvasState {
+    /// Start from a copy of the open document, as "New canvas" always has.
+    pub fn from_canvas(canvas: &Canvas) -> Self {
+        Self {
+            setup: CanvasSetup::from_canvas(canvas),
+            ..Self::default()
+        }
+    }
+
+    /// The options the preset list is built with.
+    pub fn browse(&self) -> Browse {
+        Browse {
+            scope: self.scope,
+            category: self.category,
+            query: self.search.clone(),
+            sort: self.sort,
         }
     }
 }
@@ -247,6 +291,20 @@ pub struct InkforgeApp {
     pub show_sidebar: bool,
     pub dialog: Option<Dialog>,
     pub new_canvas: NewCanvasState,
+    /// Canvas presets: the built-in catalog, the artist's own, favourites and
+    /// recents.
+    pub presets: PresetLibrary,
+    /// Folder the preset library is stored in, when persistence is on.
+    pub presets_dir: Option<PathBuf>,
+    /// Unit the rulers and the measurement readouts use.
+    pub units: Unit,
+    /// View toggles for the measurement and print guides.
+    pub show_rulers: bool,
+    pub show_grid: bool,
+    pub show_guides: bool,
+    pub show_print_marks: bool,
+    /// Grid spacing in canvas pixels.
+    pub grid_spacing: f32,
     /// Tile pyramid cache for the composite.
     pub tiles: TilePyramid,
     /// Small per-layer preview textures for the layer list.
@@ -329,7 +387,8 @@ impl InkforgeApp {
             app.start_session();
         }
         if let Some(dir) = recovery::data_dir() {
-            app.enable_recent(dir);
+            app.enable_recent(dir.clone());
+            app.enable_presets(dir);
         }
         app
     }
@@ -348,6 +407,14 @@ impl InkforgeApp {
             show_sidebar: true,
             dialog: None,
             new_canvas: NewCanvasState::default(),
+            presets: PresetLibrary::new(),
+            presets_dir: None,
+            units: Unit::Pixels,
+            show_rulers: false,
+            show_grid: false,
+            show_guides: true,
+            show_print_marks: true,
+            grid_spacing: 64.0,
             tiles: TilePyramid::new(),
             thumbnails: ThumbnailCache::new(),
             layer_drag: None,
@@ -466,13 +533,7 @@ impl InkforgeApp {
 
     pub fn open_dialog(&mut self, dialog: Dialog) {
         if matches!(dialog, Dialog::NewCanvas) {
-            self.new_canvas = NewCanvasState {
-                name: format!("{} copy", self.canvas.name()),
-                width: self.canvas.width(),
-                height: self.canvas.height(),
-                background: self.canvas.background(),
-                ..NewCanvasState::default()
-            };
+            self.new_canvas = NewCanvasState::from_canvas(&self.canvas);
         }
         self.dialog = Some(dialog);
     }
@@ -481,26 +542,196 @@ impl InkforgeApp {
         self.dialog = None;
     }
 
-    /// Apply the "New canvas" dialog, reporting validation errors inline.
+    /// Apply the "New canvas" window, reporting validation errors inline.
     pub fn create_canvas(&mut self) {
-        let state = self.new_canvas.clone();
-        let background = match state.background {
-            Background::Custom(_) => Background::Custom(state.custom_color),
-            other => other,
-        };
+        let setup = self.new_canvas.setup.clone();
 
-        match Canvas::try_new(&state.name, state.width, state.height, background) {
+        match setup.to_canvas() {
             Ok(canvas) => {
-                self.set_status(format!(
-                    "Created {} ({})",
-                    canvas.name(),
-                    canvas.dimensions_label()
-                ));
+                let label = canvas.resolution_label();
+                // A preset that was actually used becomes the first entry in
+                // the recent list, with the canvas's real dimensions (bleed
+                // included) so the card does not lie about the page size.
+                let preset = match setup.preset_id.as_deref().and_then(|id| self.presets.find(id)) {
+                    Some(found) => found,
+                    None => setup.to_preset(
+                        self.presets.next_custom_id(),
+                        setup.name.clone(),
+                        Category::Custom,
+                    ),
+                };
+                self.presets.remember_use(preset);
+                self.save_presets();
+
+                self.set_status(if setup.bleed_px > 0.0 {
+                    format!(
+                        "Created {} ({label}, {} bleed)",
+                        canvas.name(),
+                        bleed_label(&canvas)
+                    )
+                } else {
+                    format!("Created {} ({label})", canvas.name())
+                });
                 self.adopt_document(canvas, None);
                 self.dialog = None;
             }
             Err(message) => self.new_canvas.error = Some(message),
         }
+    }
+
+    // ---- canvas presets -------------------------------------------------
+
+    /// Load and persist the preset library stored in `dir`.
+    pub fn enable_presets(&mut self, dir: PathBuf) {
+        self.presets = PresetLibrary::load(&dir);
+        self.presets_dir = Some(dir);
+    }
+
+    /// Save the library, reporting a failure once in the status line. Presets
+    /// are a convenience: a read-only data folder must never block painting.
+    fn save_presets(&mut self) {
+        let Some(dir) = self.presets_dir.clone() else {
+            return;
+        };
+        if let Err(error) = self.presets.save(&dir) {
+            self.set_status(format!("The preset library could not be saved: {error}"));
+        }
+    }
+
+    /// Save the current settings as a new custom preset.
+    pub fn save_canvas_preset(&mut self) -> Result<(), String> {
+        let name = self.new_canvas.preset_name.trim().to_owned();
+        let name = if name.is_empty() {
+            self.new_canvas.setup.name.trim().to_owned()
+        } else {
+            name
+        };
+        if name.is_empty() {
+            return Err(String::from("Give the preset a name first."));
+        }
+        self.new_canvas.setup.validate()?;
+
+        let preset = self.new_canvas.setup.to_preset(
+            self.presets.next_custom_id(),
+            name,
+            Category::Custom,
+        );
+        self.presets.upsert(preset);
+        self.save_presets();
+        self.new_canvas.notice = Some(String::from("Preset saved."));
+        Ok(())
+    }
+
+    /// Write the current settings back into the custom preset being edited.
+    pub fn update_canvas_preset(&mut self) -> Result<(), String> {
+        let Some(id) = self
+            .new_canvas
+            .editing
+            .clone()
+            .or_else(|| self.new_canvas.setup.preset_id.clone())
+        else {
+            return Err(String::from("Pick one of your presets first."));
+        };
+        let Some(existing) = self.presets.find(&id) else {
+            return Err(String::from("That preset no longer exists."));
+        };
+        if existing.category != Category::Custom {
+            return Err(String::from(
+                "Built-in presets cannot be changed. Save your settings as a new preset instead.",
+            ));
+        }
+        self.new_canvas.setup.validate()?;
+
+        let name = if self.new_canvas.preset_name.trim().is_empty() {
+            existing.name
+        } else {
+            self.new_canvas.preset_name.trim().to_owned()
+        };
+        let preset = self.new_canvas.setup.to_preset(id, name, Category::Custom);
+        self.presets.upsert(preset);
+        self.save_presets();
+        self.new_canvas.notice = Some(String::from("Preset updated."));
+        Ok(())
+    }
+
+    /// Delete the custom preset currently selected, if it is one.
+    pub fn delete_canvas_preset(&mut self) -> Result<(), String> {
+        let Some(id) = self
+            .new_canvas
+            .editing
+            .clone()
+            .or_else(|| self.new_canvas.setup.preset_id.clone())
+        else {
+            return Err(String::from("Pick one of your presets first."));
+        };
+        if !self.presets.delete(&id) {
+            return Err(String::from(
+                "Only your own presets can be deleted; built-ins stay.",
+            ));
+        }
+        if self.new_canvas.editing.as_deref() == Some(id.as_str()) {
+            self.new_canvas.editing = None;
+        }
+        if self.new_canvas.setup.preset_id.as_deref() == Some(id.as_str()) {
+            self.new_canvas.setup.preset_id = None;
+        }
+        self.save_presets();
+        self.new_canvas.notice = Some(String::from("Preset deleted."));
+        Ok(())
+    }
+
+    /// Star or unstar a preset. Returns whether it is a favourite now.
+    pub fn toggle_preset_favorite(&mut self, id: &str) -> bool {
+        let state = self.presets.toggle_favorite(id);
+        self.save_presets();
+        state
+    }
+
+    /// Remove every custom preset, favourite and recent entry.
+    pub fn restore_canvas_presets(&mut self) {
+        self.presets.restore_defaults();
+        self.new_canvas.editing = None;
+        self.new_canvas.setup.preset_id = None;
+        self.save_presets();
+        self.new_canvas.notice = Some(String::from(
+            "Default presets restored; your own presets were removed.",
+        ));
+    }
+
+    /// Export the artist's custom presets to a file they choose.
+    pub fn export_canvas_presets(&mut self) -> Result<(), String> {
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("INKFORGE presets", &["json"])
+            .set_file_name("inkforge-presets.json");
+        if let Some(dir) = &self.last_dir {
+            dialog = dialog.set_directory(dir);
+        }
+        let Some(path) = dialog.save_file() else {
+            self.new_canvas.notice = Some(String::from("Export cancelled."));
+            return Ok(());
+        };
+        let path = ensure_extension(path, &["json"]);
+        let count = self.presets.export_to(&path)?;
+        self.last_dir = path.parent().map(Path::to_path_buf);
+        self.new_canvas.notice = Some(format!("Exported {count} preset(s)."));
+        Ok(())
+    }
+
+    /// Add presets from a file the artist chooses.
+    pub fn import_canvas_presets(&mut self) -> Result<(), String> {
+        let mut dialog = rfd::FileDialog::new().add_filter("INKFORGE presets", &["json"]);
+        if let Some(dir) = &self.last_dir {
+            dialog = dialog.set_directory(dir);
+        }
+        let Some(path) = dialog.pick_file() else {
+            self.new_canvas.notice = Some(String::from("Import cancelled."));
+            return Ok(());
+        };
+        let count = self.presets.import_from(&path)?;
+        self.last_dir = path.parent().map(Path::to_path_buf);
+        self.save_presets();
+        self.new_canvas.notice = Some(format!("Imported {count} preset(s)."));
+        Ok(())
     }
 
     /// Stamp a single dab and finish at once (a click without dragging).

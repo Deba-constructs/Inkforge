@@ -3,6 +3,7 @@
 pub mod canvas_view;
 pub mod dialogs;
 pub mod icons;
+pub mod new_canvas;
 pub mod sidebar;
 pub mod status_bar;
 pub mod theme;

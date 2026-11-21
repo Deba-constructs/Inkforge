@@ -603,3 +603,72 @@ fn press_key(
     }];
     consume(ctx.run_ui(frame, |ui| app.frame(ui)));
 }
+
+#[test]
+fn the_new_canvas_window_renders_every_preset_view() {
+    let ctx = egui::Context::default();
+    ui::theme::apply(&ctx);
+
+    let mut app = InkforgeApp::with_defaults();
+    app.dialog = Some(Dialog::NewCanvas);
+
+    // Apply a print preset so the bleed, safe-area and colour rows are live.
+    let mut setup = app.new_canvas.setup.clone();
+    let a4 = inkforge::io::builtin_presets()
+        .into_iter()
+        .find(|preset| preset.id == "print.a4")
+        .expect("A4 preset");
+    setup.apply_preset(&a4);
+    setup.set_bleed_mm(3.0);
+    setup.set_safe_mm(10.0);
+    setup.sketch_layer = true;
+    app.new_canvas.setup = setup;
+    app.new_canvas.selected = Some(String::from("print.a4"));
+
+    for scope in [
+        inkforge::io::Scope::All,
+        inkforge::io::Scope::Favorites,
+        inkforge::io::Scope::Recent,
+    ] {
+        app.new_canvas.scope = scope;
+        for size in [[1440.0, 900.0], [900.0, 560.0]] {
+            for _ in 0..2 {
+                let shapes = run_pass(&ctx, &mut app, size);
+                assert!(shapes > 0, "the New canvas window painted nothing");
+            }
+        }
+    }
+
+    // A search that matches nothing must still lay out.
+    app.new_canvas.search = String::from("no such preset at all");
+    let shapes = run_pass(&ctx, &mut app, [1440.0, 900.0]);
+    assert!(shapes > 0);
+}
+
+#[test]
+fn rulers_grid_and_print_guides_render_on_the_workspace() {
+    let ctx = egui::Context::default();
+    ui::theme::apply(&ctx);
+
+    let mut app = InkforgeApp::with_defaults();
+    app.show_rulers = true;
+    app.show_grid = true;
+    app.show_guides = true;
+    app.show_print_marks = true;
+    app.units = inkforge::io::Unit::Millimeters;
+
+    // A print canvas with bleed exercises the trim and safe-area guides.
+    let canvas = inkforge::engine::Canvas::try_new(
+        "Guides",
+        640,
+        480,
+        inkforge::engine::Background::White,
+    )
+    .expect("canvas");
+    app.canvas = canvas;
+    app.canvas.set_print_setup(300.0, 1.0, 20.0, 40.0);
+    app.view.request_fit();
+
+    let shapes = run_pass(&ctx, &mut app, [1440.0, 900.0]);
+    assert!(shapes > 0, "guides produced no paint output");
+}

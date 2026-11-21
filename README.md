@@ -7,7 +7,7 @@
 A desktop digital painting application for artists, written in Rust with
 `egui`/`eframe` and a GPU (wgpu) renderer.
 
-**Download for Windows** — the [1.4.0 release](https://github.com/Deba-constructs/Inkforge/releases/latest)
+**Download for Windows** — the [1.5.0 release](https://github.com/Deba-constructs/Inkforge/releases/latest)
 is a portable ZIP: unzip it, double-click `INKFORGE.exe`, nothing to install
 and no runtime to set up.
 
@@ -26,7 +26,13 @@ GIMP and MyPaint open, a window title that tracks the document and
 its unsaved state, a recent-projects menu, GPU uploads that copy only the part
 of the canvas that changed, canvas rotation that turns the sheet like a drawing
 board, and large brushes stamped across several CPU cores.
-The rest of the polish pass is next. Version 1.4.0 has been built into a
+Version 1.5.0 adds the **canvas preset system**: a New canvas window with 53
+presets across illustration, comic and manga, print, photography, animation,
+game art and UI, every setting editable down to the last margin, presets you can
+save, favourite, search and share, plus real print setup — bleed included in the
+canvas, safe-area and trim guides, rulers in pixels or millimetres, and DPI that
+reaches the exported PNG.
+Version 1.5.0 has been built into a
 portable Windows executable and packaged as a downloadable ZIP (see
 [Release package](#release-package)). See
 [DEVELOPMENT.md](DEVELOPMENT.md) for the exact state of every feature.
@@ -58,7 +64,12 @@ portable Windows executable and packaged as a downloadable ZIP (see
 | Bottom status bar: tool, status message, zoom controls, canvas dimensions | Working |
 | Start state on an untouched canvas | Working; a small card names the first three things to try and disappears as soon as there is a painted pixel — it comes back if you undo the only stroke |
 | Tooltips | Working; every tool, brush slider, fill/selection option and layer button names its shortcut and explains what it changes |
-| New canvas dialog with presets, size validation and memory estimate | Working |
+| New canvas window: 53 presets in seven categories, search, category filter, favourites, recents, sorting by name / size / category / recently used, dimension and aspect readout on every card | Working; each category holds exactly the documented sizes — illustration 7, comic & manga 7, print 11 (A0–A6 and US Letter/Legal/Tabloid/Poster, resolved from millimetres or inches at 300 dpi), photography 9, animation 6, game art 7, design & UI 6. Cards draw a sheet in the preset's real proportions, clicking one fills every field, and arrow keys / Enter work without a mouse |
+| Canvas settings: width and height in pixels, millimetres, centimetres or inches; DPI; portrait/landscape switch; aspect-ratio lock with 1:1, 4:5, 3:4, 2:3, 16:9 and 9:16 shortcuts; pixel aspect ratio; white, black, transparent or custom background; bleed and safe-area margins; optional starting sketch layer | Working; conversions round to whole pixels exactly (A4 is 2480 × 3508 at 300 dpi, US Letter 2550 × 3300), the canvas size after bleed is shown, and every value reaches the created document and the saved project |
+| Preset management: save, edit, delete, favourite, search, filter, sort, restore defaults, import and export | Working; the library lives in `canvas-presets.json` in INKFORGE's data folder, a damaged or hand-edited file falls back to the built-ins instead of failing, and an imported preset whose id already exists is stored alongside rather than overwriting it |
+| Validation and allocation guard | Working; a size must be 16–20 000 px per side and at most 200 megapixels, checked *before* any buffer is allocated, so an impossible request is a readable message rather than a frozen machine. The limits cover real pages: a webtoon is 800 × 12 800, an A0 at 300 dpi 9933 × 14 043, a manga spread 7280 × 5150 |
+| Print metadata | Working; PNG export writes `pHYs` (the DPI, with separate horizontal and vertical densities when the pixel aspect is not square) and `sRGB` chunks, and `.inkforge` projects (format version 3) keep the resolution, pixel aspect, bleed and safe area |
+| Rulers, grid and guides | Working; View ▸ Guides turns rulers in pixels / mm / cm / inches, a configurable grid, trim marks and bleed/safe-area outlines on and off. Rulers read the same viewport maths as the pointer and hide themselves while the canvas is turned |
 | Keyboard shortcuts, About and Shortcuts windows | Working |
 | File I/O: `.inkforge` projects (layers, groups, blends, all of it), PNG/JPEG open and import, PNG/JPEG export of the flattened image, and OpenRaster (`.ora`) export of the whole layer stack | Working; Save / Save as / Open with `Ctrl+S`, `Ctrl+Shift+S`, `Ctrl+O`, and an unsaved-changes prompt before anything replaces your work. The `.ora` file is checked by reading the archive back (structure, CRCs, layer tree, pixels); it has not been opened in Krita or GIMP yet |
 | Autosave and crash recovery | Working; unsaved work is written to a recovery copy every 20 seconds and offered back the next time the app starts |
@@ -72,7 +83,7 @@ disabled and carry a tooltip saying which milestone delivers them.
 
 ## What is missing
 
-Version 1.4.0 is a genuinely usable painting app rather than a finished one.
+Version 1.5.0 is a genuinely usable painting app rather than a finished one.
 These are the gaps, and the table above does not paper over them:
 
 * **No image transform.** A layer or selection cannot be scaled, flipped,
@@ -81,9 +92,22 @@ These are the gaps, and the table above does not paper over them:
   with the brush and eraser), but groups cannot, a mask cannot be moved to
   another layer on its own, and there is no mask density or feather control.
   Adjustment layers with curves or levels are not implemented.
-* **The project format is version 2.** Masks live in it, so a 1.3.0 file opens
-  in 1.1.0/1.2.0 only if those builds refuse it — they do, with a clear "made by
-  a newer INKFORGE" message. Version 1 projects still open in 1.4.0.
+* **The project format is version 3.** Version 2 added masks and version 3 the
+  print setup, so older builds refuse a newer file with a clear "made by a
+  newer INKFORGE" message instead of misreading it. Version 1 and 2 projects
+  still open in 1.5.0, at 72 dpi with no bleed.
+* **Only 8-bit RGB is supported.** CMYK, Grayscale and 16/32-bit canvases are
+  not offered at all — the engine composites 8-bit sRGB, and pretending
+  otherwise would make the depth and mode fields lies. There is no ICC
+  profile selection; exported PNGs declare sRGB.
+* **No perspective guides.** The grid and the print guides are visual aids;
+  there are no vanishing-point assistants and nothing snaps to a guide.
+* **Rulers disappear while the canvas is turned**, because there is no upright
+  axis to measure along at an angle.
+* **Bleed enlarges the canvas.** A print preset with 3 mm bleed becomes
+  70 px wider and taller than its trim size, with the trim line drawn inside;
+  that is the printable-file convention, but it is not what Photoshop's New
+  Document dialog does, so it is stated here rather than implied.
 * **OpenRaster is export-only.** `.ora` files cannot be opened, and the format
   has no portable attribute for masks, live colour adjustments or clip to layer
   below, so those are baked into each exported layer's pixels — the picture
@@ -118,18 +142,18 @@ the Rust runtime is statically linked, so end users need no Rust installation.
 
 ### Release package
 
-`1.4.0` is published on the [releases page](https://github.com/Deba-constructs/Inkforge/releases/latest)
-as `INKFORGE-1.4.0-windows-x86_64.zip` (5.4 MB). It holds `INKFORGE.exe`
-(12.3 MB, 64-bit Windows GUI executable), a `README.txt` for the artist and the
-licence, and the release notes list its SHA-256. Nothing needs installing: unzip
-it and run the executable. The two scripts below rebuild the same ZIP locally
-into `dist/`.
+`1.5.0` is published on the [releases page](https://github.com/Deba-constructs/Inkforge/releases/latest)
+as `INKFORGE-1.5.0-windows-x86_64.zip` (5.5 MB, 5 777 776 bytes). It holds
+`INKFORGE.exe` (12.6 MB, 13 228 544 bytes, 64-bit Windows GUI executable), a
+`README.txt` for the artist and the licence, and the release notes list its
+SHA-256. Nothing needs installing: unzip it and run the executable. The two
+scripts below rebuild the same ZIP locally into `dist/`.
 
 ```bash
 # On Windows, with the MSVC toolchain:
 powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1
 
-# On Linux, cross-compiled with cargo-zigbuild (how the 1.4.0 ZIP was produced):
+# On Linux, cross-compiled with cargo-zigbuild (how the 1.5.0 ZIP was produced):
 rustup target add x86_64-pc-windows-gnu
 cargo install cargo-zigbuild    # needs `zig` on PATH
 scripts/package-windows-cross.sh
@@ -140,7 +164,7 @@ Both scripts write the same layout: a portable folder under `dist/` and its
 (`kernel32`, `user32`, `d3d`/`dxgi`, `dwmapi`, the `api-ms-win-crt-*` runtime),
 so no Visual C++ redistributable or MinGW runtime is needed. The executable
 carries its own icon (seven sizes, 16 to 256 px) and version metadata, so
-Explorer, the task bar and Task Manager show **INKFORGE 1.4.0** instead of a
+Explorer, the task bar and Task Manager show **INKFORGE 1.5.0** instead of a
 generic binary.
 
 Both packaging scripts go through `build.rs`, which compiles
@@ -208,6 +232,8 @@ src/
 ├── io/
 │   ├── project.rs     the .inkforge container: JSON manifest + PNG layers and masks
 │   ├── raster.rs      PNG/JPEG decode, flatten-and-export, image import
+│   ├── png.rs         PNG encoding with pHYs (DPI) and sRGB chunks
+│   ├── canvas_presets.rs  preset catalog, units, canvas setup, preset library
 │   ├── ora.rs         OpenRaster export: stack.xml, PNG streams, stored ZIP
 │   ├── recent.rs      the persisted recent-projects list
 │   └── recovery.rs    autosave slot, sidecar metadata, crash recovery
@@ -217,9 +243,10 @@ src/
     ├── top_bar.rs     brand, menus, brush/colour controls, history
     ├── tool_rail.rs   left tool selection
     ├── sidebar.rs     colour, brush, canvas and layer panels
-    ├── canvas_view.rs page rendering, zoom and pan
+    ├── canvas_view.rs page rendering, zoom and pan, rulers, grid and guides
+    ├── new_canvas.rs  the canvas preset browser and setup window
     ├── status_bar.rs  status message and zoom controls
-    └── dialogs.rs     new canvas, unsaved changes, recovery, file errors, about, shortcuts
+    └── dialogs.rs     unsaved changes, recovery, file errors, about, shortcuts
 tests/
 ├── model.rs           canvas validation and viewport maths tests
 ├── painting.rs        brush stamping, opacity, erasing and sampling tests
@@ -235,6 +262,7 @@ tests/
 ├── pen.rs             pressure/tilt mapping, mouse fallback, bad readings
 ├── io.rs              project round trips, corrupt files, PNG/JPEG export and import
 ├── ora.rs             OpenRaster archive layout, layer tree, baked masks and adjustments
+├── canvas_presets.rs  the 53-preset catalog, units, validation, library, PNG print metadata
 ├── recovery.rs        autosave ticking, crash recovery, discard and keep-for-later
 ├── recent.rs          recent-project ordering, cap, pruning and reopening
 ├── tiles.rs           composite tile pyramid: levels, uploads, downscaling

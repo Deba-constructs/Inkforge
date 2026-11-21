@@ -31,6 +31,7 @@ use crate::egui::Color32;
 use crate::engine::Canvas;
 use crate::layers::{BlendMode, Entry, Group, Layer};
 
+use super::png::{self, PngMeta};
 use super::raster::flatten_rgba;
 use super::straight_rgba;
 
@@ -53,9 +54,14 @@ pub fn export_ora(canvas: &mut Canvas, path: &Path) -> Result<(), String> {
     // The specification requires `mimetype` to be the first entry, stored.
     zip.add("mimetype", ORA_MIMETYPE.as_bytes())?;
     zip.add("stack.xml", stack.as_bytes())?;
+    let merged_meta = PngMeta {
+        dpi_x: canvas.dpi() * canvas.pixel_aspect(),
+        dpi_y: canvas.dpi(),
+        srgb: true,
+    };
     zip.add(
         "mergedimage.png",
-        &encode_png(merged_width, merged_height, &merged)?,
+        &encode_png_with(merged_width, merged_height, &merged, Some(merged_meta))?,
     )?;
 
     let (thumb_width, thumb_height, thumb) = thumbnail(&merged, merged_width, merged_height);
@@ -269,13 +275,19 @@ fn layer_pixels(layer: &Layer) -> (u32, u32, Vec<u8>) {
 }
 
 fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {
-    use image::{ExtendedColorType, ImageEncoder};
+    encode_png_with(width, height, rgba, None)
+}
 
-    let mut out = Vec::new();
-    image::codecs::png::PngEncoder::new(&mut out)
-        .write_image(rgba, width, height, ExtendedColorType::Rgba8)
-        .map_err(|error| format!("Could not encode a PNG for the archive: {error}"))?;
-    Ok(out)
+/// Encode with optional print metadata; layer streams carry the resolution so
+/// a layer extracted from the archive keeps its physical size.
+fn encode_png_with(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    meta: Option<PngMeta>,
+) -> Result<Vec<u8>, String> {
+    png::encode_rgba(rgba, width, height, meta)
+        .map_err(|error| format!("Could not encode a PNG for the archive: {error}"))
 }
 
 /// Nearest-neighbour thumbnail that fits inside [`THUMBNAIL_MAX`] without
@@ -413,34 +425,7 @@ impl ZipWriter {
     }
 }
 
-const CRC_TABLE: [u32; 256] = {
-    let mut table = [0u32; 256];
-    let mut index = 0;
-    while index < 256 {
-        let mut crc = index as u32;
-        let mut bit = 0;
-        while bit < 8 {
-            crc = if crc & 1 != 0 {
-                0xEDB8_8320 ^ (crc >> 1)
-            } else {
-                crc >> 1
-            };
-            bit += 1;
-        }
-        table[index] = crc;
-        index += 1;
-    }
-    table
-};
-
-/// Standard CRC-32, as every ZIP entry header carries.
-fn crc32(bytes: &[u8]) -> u32 {
-    let mut crc = 0xFFFF_FFFFu32;
-    for byte in bytes {
-        crc = CRC_TABLE[((crc ^ *byte as u32) & 0xFF) as usize] ^ (crc >> 8);
-    }
-    crc ^ 0xFFFF_FFFF
-}
+use super::png::crc32;
 
 /// Current local time as a DOS date and time pair, which is what ZIP headers
 /// use. Falls back to 1980-01-01 when the clock is before the epoch.

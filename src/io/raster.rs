@@ -14,6 +14,7 @@ use crate::egui::Color32;
 use crate::engine::{Background, Canvas, MIN_CANVAS_DIM, PixelRegion};
 use crate::layers::{composite_pixel, BlendMode};
 
+use super::png::{self, PngMeta};
 use super::straight_rgba;
 
 /// Image formats INKFORGE can write.
@@ -60,12 +61,18 @@ pub fn export_image(
 
     match format {
         ImageFormat::Png => {
-            let file = File::create(path).map_err(|error| {
-                format!("Could not create {}: {error}", path.display())
-            })?;
-            image::codecs::png::PngEncoder::new(file)
-                .write_image(&rgba, width, height, ExtendedColorType::Rgba8)
-                .map_err(|error| format!("Could not encode the PNG: {error}"))
+            // The PNG carries the document's resolution and colour space, so
+            // a print shop or another art application opens it at the size the
+            // artist designed.
+            let meta = PngMeta {
+                dpi_x: canvas.dpi() * canvas.pixel_aspect(),
+                dpi_y: canvas.dpi(),
+                srgb: true,
+            };
+            let bytes = png::encode_rgba(&rgba, width, height, Some(meta))?;
+            std::fs::write(path, bytes).map_err(|error| {
+                format!("Could not write {}: {error}", path.display())
+            })
         }
         ImageFormat::Jpeg => {
             // Drop the alpha channel, compositing see-through pixels onto white.

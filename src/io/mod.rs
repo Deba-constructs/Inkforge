@@ -8,12 +8,18 @@
 //!
 //! [`Canvas`]: crate::engine::Canvas
 
+pub mod canvas_presets;
 pub mod ora;
+pub mod png;
 pub mod project;
 pub mod raster;
 pub mod recent;
 pub mod recovery;
 
+pub use canvas_presets::{
+    builtin_presets, px_to_unit, unit_to_px, BackgroundSpec, Browse, CanvasPreset, CanvasSetup,
+    Category, PresetLibrary, Scope, Sort, Unit,
+};
 pub use ora::export_ora;
 pub use project::{load_project, save_project};
 pub use raster::{export_image, open_image, read_image, ImageFormat};

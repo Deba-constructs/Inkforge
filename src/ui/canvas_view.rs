@@ -13,6 +13,7 @@ use inkforge::egui::{
 use super::theme;
 use crate::app::{InkforgeApp, Tool};
 use crate::engine::{Selection, SoftSpan, Viewport};
+use crate::io::Unit;
 
 /// Quick Mask tint: a translucent red wash over the selected area.
 const QUICK_MASK_COLOUR: Color32 = Color32::from_rgb(0xD2, 0x3B, 0x3B);
@@ -25,6 +26,10 @@ const CHECKER_DARK: Color32 = Color32::from_rgb(0xC6, 0xC6, 0xC6);
 /// Radians the view turns per screen pixel of a Shift-drag with the Hand tool.
 /// 0.006 rad is about a third of a degree per pixel: a 200 px drag is 70°.
 const ROTATE_PER_PIXEL: f32 = 0.006;
+/// Width of the ruler strips, in screen pixels.
+const RULER: f32 = 18.0;
+/// Smallest distance between labelled ruler ticks, in screen pixels.
+const RULER_LABEL_GAP: f32 = 62.0;
 
 pub fn show(app: &mut InkforgeApp, ui: &mut egui::Ui) {
     egui::CentralPanel::default()
@@ -35,7 +40,20 @@ pub fn show(app: &mut InkforgeApp, ui: &mut egui::Ui) {
                 return;
             }
 
-            let (view, response) = ui.allocate_exact_size(available, Sense::click_and_drag());
+            // Allocate the whole area, then take the ruler strips out of it so
+            // the artwork is never hidden under the rulers.
+            let (outer, _) = ui.allocate_exact_size(available, Sense::hover());
+            let rulers = app.show_rulers && !app.view.rotated();
+            let view = if rulers {
+                Rect::from_min_max(outer.min + Vec2::splat(RULER), outer.max)
+            } else {
+                outer
+            };
+            let response = ui.interact(
+                view,
+                ui.auto_id_with("canvas_surface"),
+                Sense::click_and_drag(),
+            );
             let painter = ui.painter_at(view);
             let doc = app.canvas.size_vec();
 
@@ -97,6 +115,7 @@ pub fn show(app: &mut InkforgeApp, ui: &mut egui::Ui) {
                 );
             }
 
+            draw_guides(app, &painter, &page_view, page);
             empty_state(app, &painter, page, view);
 
             if !page.intersects(view) {
@@ -110,9 +129,254 @@ pub fn show(app: &mut InkforgeApp, ui: &mut egui::Ui) {
             }
 
             draw_overlays(app, &painter, &page_view);
+            if rulers {
+                draw_rulers(app, ui, outer, view, page);
+            }
             handle_input(app, ui, &response, view);
             brush_cursor(app, ui, &response);
         });
+}
+
+/// Grid, trim, bleed and safe-area guides, plus print marks.
+///
+/// Everything is painted over the page and clipped to the canvas area, so the
+/// guides never affect painting: they are measurement aids, not content.
+fn draw_guides(app: &InkforgeApp, painter: &Painter, page_view: &PageView, page: Rect) {
+    if page.width() <= 0.0 || page.height() <= 0.0 {
+        return;
+    }
+
+    if app.show_grid {
+        let spacing = app.grid_spacing.max(1.0) as f32 * page_view.zoom;
+        if spacing >= 4.0 {
+            let stroke = Stroke::new(1.0, Color32::from_white_alpha(26));
+            let mut x = 0.0;
+            while x <= page_view.doc.x + 0.5 {
+                let from = page_view.point(Pos2::new(x, 0.0));
+                let to = page_view.point(Pos2::new(x, page_view.doc.y));
+                if page.contains(from) || page.contains(to) {
+                    painter.line_segment([from, to], stroke);
+                }
+                x += app.grid_spacing.max(1.0) as f32;
+            }
+            let mut y = 0.0;
+            while y <= page_view.doc.y + 0.5 {
+                let from = page_view.point(Pos2::new(0.0, y));
+                let to = page_view.point(Pos2::new(page_view.doc.x, y));
+                if page.contains(from) || page.contains(to) {
+                    painter.line_segment([from, to], stroke);
+                }
+                y += app.grid_spacing.max(1.0) as f32;
+            }
+        }
+    }
+
+    if !app.show_guides {
+        return;
+    }
+
+    // The canvas includes its bleed, so the trim line sits inwards by the bleed
+    // and the safe area sits further in still.
+    let bleed = app.canvas.bleed_px().round();
+    let safe = app.canvas.safe_px();
+    let trim = Rect::from_min_max(
+        Pos2::new(bleed, bleed),
+        Pos2::new(page_view.doc.x - bleed, page_view.doc.y - bleed),
+    );
+    if trim.width() > 2.0 && trim.height() > 2.0 && bleed > 0.0 {
+        outline_quad(painter, page_view.corners(trim), theme::ACCENT, 1.2, 6.0, 5.0);
+    }
+
+    if safe > 0.0 {
+        let safe_rect = Rect::from_min_max(
+            trim.min + Vec2::splat(safe),
+            trim.max - Vec2::splat(safe),
+        );
+        if safe_rect.width() > 2.0 && safe_rect.height() > 2.0 {
+            outline_quad(
+                painter,
+                page_view.corners(safe_rect),
+                Color32::from_rgb(0x6F, 0xB5, 0xE8),
+                1.0,
+                3.0,
+                4.0,
+            );
+        }
+    }
+
+    // Trim marks: short ticks at the trim corners, reaching into the bleed so a
+    // printer can see where the cut falls.
+    if app.show_print_marks && bleed > 0.0 {
+        let marks = (bleed * page_view.zoom).clamp(3.0, 28.0);
+        let corners = page_view.corners(trim);
+        let stroke = Stroke::new(1.0, theme::ACCENT);
+        for corner in corners {
+            // Each mark straddles its corner along the page axes, which stay
+            // axis-aligned on screen even when the view is turned.
+            let along_x = Vec2::new(marks, 0.0);
+            let along_y = Vec2::new(0.0, marks);
+            painter.line_segment([corner - along_x, corner + along_x], stroke);
+            painter.line_segment([corner - along_y, corner + along_y], stroke);
+        }
+    }
+}
+
+/// Dashed outline of a screen-space quad.
+fn outline_quad(
+    painter: &Painter,
+    corners: [Pos2; 4],
+    colour: Color32,
+    width: f32,
+    dash: f32,
+    gap: f32,
+) {
+    let stroke = Stroke::new(width, colour);
+    for index in 0..4 {
+        let from = corners[index];
+        let to = corners[(index + 1) % 4];
+        let delta = to - from;
+        let length = delta.length();
+        if length <= 1.0 {
+            continue;
+        }
+        let direction = delta / length;
+        let mut offset = 0.0;
+        while offset < length {
+            let end = (offset + dash).min(length);
+            painter.line_segment([from + direction * offset, from + direction * end], stroke);
+            offset += dash + gap;
+        }
+    }
+}
+
+/// Top and left rulers, measured in the current unit.
+///
+/// They read the same `Viewport` mapping as the pointer, so a tick always sits
+/// over the pixel it names. A turned canvas has no upright axis to measure
+/// along, so the rulers are simply left out while it is turned.
+fn draw_rulers(app: &InkforgeApp, ui: &egui::Ui, outer: Rect, view: Rect, page: Rect) {
+    let unit = app.units;
+    let dpi = app.canvas.dpi();
+    let zoom = app.view.zoom();
+    let pixels_per_unit = match unit {
+        Unit::Pixels => 1.0,
+        Unit::Millimeters => dpi / 25.4,
+        Unit::Centimeters => dpi / 2.54,
+        Unit::Inches => dpi,
+    };
+    let per_unit_on_screen = pixels_per_unit * zoom;
+    if per_unit_on_screen <= 0.0 {
+        return;
+    }
+
+    // A tick every 1, 2, 5, 10, 20, 25, 50, … units, whichever first leaves
+    // enough room for its label.
+    let mut step = 1.0f32;
+    for candidate in [
+        1.0, 2.0, 5.0, 10.0, 20.0, 25.0, 50.0, 100.0, 200.0, 250.0, 500.0, 1000.0, 2000.0,
+        5000.0,
+    ] {
+        step = candidate;
+        if candidate * per_unit_on_screen >= RULER_LABEL_GAP {
+            break;
+        }
+    }
+
+    let painter = ui.painter_at(outer);
+    let top = Rect::from_min_max(Pos2::new(view.left(), outer.top()), Pos2::new(view.right(), view.top()));
+    let left = Rect::from_min_max(Pos2::new(outer.left(), view.top()), Pos2::new(view.left(), view.bottom()));
+    let corner = Rect::from_min_max(outer.min, Pos2::new(view.left(), view.top()));
+
+    for strip in [top, left, corner] {
+        painter.rect_filled(strip, CornerRadius::ZERO, theme::BAR);
+    }
+    painter.hline(
+        top.x_range(),
+        top.max.y - 0.5,
+        Stroke::new(1.0, theme::LINE),
+    );
+    painter.vline(
+        left.max.x - 0.5,
+        left.y_range(),
+        Stroke::new(1.0, theme::LINE),
+    );
+
+    // The page's span is marked on both rulers so the sheet is easy to find.
+    let page_colour = theme::with_alpha(theme::ACCENT, 160);
+    painter.hline(
+        (page.left().max(view.left()))..=(page.right().min(view.right())),
+        top.max.y - 1.0,
+        Stroke::new(2.0, page_colour),
+    );
+    painter.vline(
+        left.max.x - 1.0,
+        (page.top().max(view.top()))..=(page.bottom().min(view.bottom())),
+        Stroke::new(2.0, page_colour),
+    );
+
+    let top_painter = painter.with_clip_rect(top);
+    let left_painter = painter.with_clip_rect(left);
+    let tick = Stroke::new(1.0, theme::TEXT_MUTED);
+
+    // Horizontal ruler.
+    let start_value = ((view.left() - page.left()) / zoom).max(0.0) / pixels_per_unit;
+    let end_value = ((view.right() - page.left()) / zoom).min(app.canvas.width() as f32)
+        / pixels_per_unit;
+    let first = (start_value / step).floor() * step;
+    let mut value = first;
+    let mut guard = 0;
+    while value <= end_value && guard < 400 {
+        let x = page.left() + value * per_unit_on_screen;
+        top_painter.line_segment(
+            [Pos2::new(x, top.max.y - 6.0), Pos2::new(x, top.max.y)],
+            tick,
+        );
+        top_painter.text(
+            Pos2::new(x + 3.0, top.top() + 1.0),
+            Align2::LEFT_TOP,
+            tick_label(value, step),
+            FontId::proportional(9.0),
+            theme::TEXT_MUTED,
+        );
+        value += step;
+        guard += 1;
+    }
+
+    // Vertical ruler.
+    let start_value = ((view.top() - page.top()) / zoom).max(0.0) / pixels_per_unit;
+    let end_value = ((view.bottom() - page.top()) / zoom).min(app.canvas.height() as f32)
+        / pixels_per_unit;
+    let first = (start_value / step).floor() * step;
+    let mut value = first;
+    let mut guard = 0;
+    while value <= end_value && guard < 400 {
+        let y = page.top() + value * per_unit_on_screen;
+        left_painter.line_segment(
+            [Pos2::new(left.max.x - 6.0, y), Pos2::new(left.max.x, y)],
+            tick,
+        );
+        left_painter.text(
+            Pos2::new(left.left() + 1.0, y + 1.0),
+            Align2::LEFT_TOP,
+            tick_label(value, step),
+            FontId::proportional(9.0),
+            theme::TEXT_MUTED,
+        );
+        value += step;
+        guard += 1;
+    }
+}
+
+/// A tick label: whole numbers unless the step is fractional.
+fn tick_label(value: f32, step: f32) -> String {
+    let label = if value.fract().abs() < 1e-4 {
+        format!("{value:.0}")
+    } else if step < 0.1 {
+        format!("{value:.2}")
+    } else {
+        format!("{value:.1}")
+    };
+    label
 }
 
 /// Canvas-to-screen mapping for one frame, including the view rotation.

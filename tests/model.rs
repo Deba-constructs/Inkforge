@@ -2,7 +2,8 @@
 
 use inkforge::egui::{pos2, vec2, Rect};
 use inkforge::engine::{
-    Background, BrushSettings, Canvas, Viewport, MAX_CANVAS_DIM, MIN_CANVAS_DIM, MAX_SIZE,
+    validate_canvas_size, Background, BrushSettings, Canvas, Viewport, MAX_CANVAS_DIM,
+    MAX_CANVAS_PIXELS, MAX_SIZE, MIN_CANVAS_DIM,
 };
 
 fn view() -> Rect {
@@ -14,7 +15,17 @@ fn canvas_rejects_out_of_range_sizes() {
     assert!(Canvas::try_new("Too narrow", 0, 600, Background::White).is_err());
     assert!(Canvas::try_new("Too tall", 600, MAX_CANVAS_DIM + 1, Background::White).is_err());
     assert!(Canvas::try_new("Smallest", MIN_CANVAS_DIM, MIN_CANVAS_DIM, Background::White).is_ok());
-    assert!(Canvas::try_new("Largest", MAX_CANVAS_DIM, MAX_CANVAS_DIM, Background::White).is_ok());
+
+    // The area limit is checked without allocating, so a 400 MP request is a
+    // readable error rather than a failed allocation.
+    assert!(validate_canvas_size(MAX_CANVAS_DIM, MAX_CANVAS_DIM).is_err());
+    let pixels = MAX_CANVAS_DIM as u64 * MAX_CANVAS_DIM as u64;
+    assert!(pixels > MAX_CANVAS_PIXELS);
+
+    // Tall pages the presets actually offer must pass: webtoon and A0 at 300 dpi.
+    assert!(validate_canvas_size(800, 12_800).is_ok());
+    assert!(validate_canvas_size(9_933, 14_043).is_ok());
+    assert!(validate_canvas_size(7_280, 5_150).is_ok());
 }
 
 #[test]

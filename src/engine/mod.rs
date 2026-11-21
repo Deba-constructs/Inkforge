@@ -27,7 +27,10 @@ pub use brush::{
 pub use pen::{PenSample, PenSettings, PenTip};
 pub use presets::{BrushPreset, PRESETS};
 pub use stabilizer::Stabilizer;
-pub use canvas::{Background, Canvas, MAX_CANVAS_DIM, MIN_CANVAS_DIM};
+pub use canvas::{
+    validate_canvas_size, Background, Canvas, DEFAULT_DPI, MAX_CANVAS_DIM, MAX_CANVAS_PIXELS,
+    MAX_DPI, MAX_PIXEL_ASPECT, MIN_CANVAS_DIM, MIN_PIXEL_ASPECT,
+};
 pub use fill::FillMask;
 pub use pyramid::{TilePyramid, TILE};
 pub use renderer::ThumbnailCache;

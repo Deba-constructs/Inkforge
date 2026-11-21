@@ -47,6 +47,27 @@ What it does
 * Flood fill, and line / rectangle / ellipse shapes drawn with the current
   brush.
 * Undo and redo across painting, erasing, filling, shapes, layers and groups.
+* New canvas window with 53 ready-made presets in seven categories:
+  illustration, comic and manga, print (ISO A0-A6, US Letter/Legal/Tabloid and
+  posters at 300 dpi), photography and social media, animation, game art and
+  design/UI. Every preset shows its proportions, pixel size, aspect ratio,
+  megapixels and resolution before you commit, and every setting is editable:
+  size in pixels, millimetres, centimetres or inches; DPI; portrait or
+  landscape; an aspect-ratio lock with quick ratios; pixel aspect ratio; white,
+  black, transparent or custom background; optional bleed and safe-area
+  margins; and an optional starting sketch layer. Search, filter by category,
+  sort, star favourites and see recently used presets. Save your own presets,
+  edit and delete them, import and export them as JSON, or restore the
+  defaults.
+* Print setup that is real rather than decorative: bleed is added to the canvas
+  on every side, the trim line and safe area are drawn as guides, and the DPI
+  travels into exported PNG files (with the sRGB colour declaration), so other
+  software opens them at the intended physical size. The project file keeps the
+  resolution, pixel aspect and margins, and the sidebar reports the print size
+  in millimetres.
+* Rulers, grid and guides (View > Guides): measurements in pixels, millimetres,
+  centimetres or inches, a configurable grid, trim marks, and bleed and
+  safe-area outlines on print canvases.
 * Files: .inkforge projects keep every layer, folder and property; PNG and JPEG
   open, import and export, and File > Export OpenRaster writes a layered .ora
   file that Krita, GIMP and MyPaint can open. Your work is autosaved to a
@@ -133,7 +154,17 @@ DEVELOPMENT.md in the source repository.
   are baked into each exported layer: the picture matches what you see, but the
   mask itself does not travel. The file has not yet been opened in Krita or
   GIMP here, only checked by reading the archive back.
-* Presets are built in; there is no preset editor.
+* Canvas presets are yours to save, edit, delete, favourite, import and export;
+  the 43 brush presets are still built in with no brush editor.
+* Only 8-bit RGB (sRGB) canvases are supported. CMYK, Grayscale and 16/32-bit
+  depth are not offered, because the compositing engine is 8-bit RGBA and a
+  colour-managed pipeline would be needed to make those honest. There is no
+  ICC profile selection; PNG exports declare sRGB.
+* There are no perspective guides or vanishing-point assistants yet: the grid
+  and the print guides are the only overlays that snap nothing and change
+  nothing.
+* Rulers are hidden while the canvas is turned, because there is no upright
+  axis to measure along at an angle.
 * This build was compiled and cross-compiled on Linux; it has not been launched
   on Windows or looked at on a real screen yet, so how the interface looks at
   your DPI and how the brush feels are still unconfirmed. Please report what

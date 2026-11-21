@@ -73,12 +73,19 @@ pub fn show(app: &mut InkforgeApp, ui: &mut egui::Ui) {
                     }
 
                     ui.label(RichText::new("·").size(11.0).color(theme::TEXT_MUTED));
+                    let (mm_w, mm_h) = app.canvas.print_size_mm();
                     ui.label(
-                        RichText::new(app.canvas.dimensions_label())
+                        RichText::new(app.canvas.resolution_label())
                             .size(11.0)
                             .monospace()
                             .color(theme::TEXT_MUTED),
-                    );
+                    )
+                    .on_hover_text(format!(
+                        "{:.1} × {:.1} mm at {}",
+                        mm_w,
+                        mm_h,
+                        app.canvas.dpi_label()
+                    ));
 
                     // A turned canvas shows its angle here, and the angle is the
                     // button that puts it back upright: the quickest way out of

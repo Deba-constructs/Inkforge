@@ -303,6 +303,38 @@ fn view_menu(app: &mut InkforgeApp, ui: &mut egui::Ui) {
     }
 
     ui.separator();
+    ui.menu_button("Guides", |ui| {
+        ui.checkbox(&mut app.show_rulers, "Rulers");
+        ui.checkbox(&mut app.show_grid, "Grid");
+        ui.checkbox(&mut app.show_guides, "Bleed and safe-area guides");
+        ui.checkbox(&mut app.show_print_marks, "Trim marks");
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Grid every").size(11.0).color(theme::TEXT_MUTED));
+            ui.add(
+                DragValue::new(&mut app.grid_spacing)
+                    .range(4.0..=1024.0)
+                    .speed(1.0)
+                    .fixed_decimals(0)
+                    .suffix(" px"),
+            );
+        });
+        ui.separator();
+        ui.menu_button("Units", |ui| {
+            for unit in crate::io::Unit::ALL {
+                if ui
+                    .selectable_label(app.units == unit, unit.label())
+                    .clicked()
+                {
+                    app.units = unit;
+                    app.set_status(format!("Measuring in {}", unit.label().to_lowercase()));
+                    ui.close();
+                }
+            }
+        });
+    });
+
+    ui.separator();
     ui.checkbox(&mut app.show_tool_rail, "Tool rail");
     ui.checkbox(&mut app.show_sidebar, "Side panel");
     ui.separator();
