@@ -458,7 +458,11 @@ pub struct LayerProps {
     pub adjust: Adjustment,
 }
 
-/// One paint layer: its properties plus an RGBA surface.
+/// One paint layer: its properties, an RGBA surface and an optional mask.
+///
+/// The mask stores its coverage in the alpha channel (white `255` = fully
+/// visible, black `0` = fully hidden). It never changes the layer's pixels, so
+/// adding, painting, inverting or removing a mask is always reversible.
 #[derive(Clone, Debug)]
 pub struct Layer {
     id: LayerId,
@@ -466,6 +470,7 @@ pub struct Layer {
     /// Group this layer belongs to, if any.
     group: Option<LayerId>,
     surface: Surface,
+    mask: Option<Surface>,
 }
 
 impl Layer {
@@ -483,6 +488,7 @@ impl Layer {
             },
             group: None,
             surface: Surface::new(width, height),
+            mask: None,
         }
     }
 
@@ -529,6 +535,68 @@ impl Layer {
     /// The layer's live colour adjustments.
     pub fn adjustment(&self) -> Adjustment {
         self.props.adjust
+    }
+
+    /// True when this layer has a mask.
+    pub fn has_mask(&self) -> bool {
+        self.mask.is_some()
+    }
+
+    /// The layer's mask, when it has one.
+    pub fn mask(&self) -> Option<&Surface> {
+        self.mask.as_ref()
+    }
+
+    /// Mutable mask pixels, used by undo/redo and mask painting.
+    pub fn mask_mut(&mut self) -> Option<&mut Surface> {
+        self.mask.as_mut()
+    }
+
+    /// Put a mask on the layer (or remove it with `None`), returning the mask
+    /// that was there before so the caller can keep it for undo.
+    pub fn set_mask(&mut self, mask: Option<Surface>) -> Option<Surface> {
+        std::mem::replace(&mut self.mask, mask)
+    }
+
+    /// Create a full-canvas mask: `reveal == true` shows everything, `false`
+    /// hides everything. Returns `false` when the layer already has a mask.
+    pub fn add_mask(&mut self, reveal: bool) -> bool {
+        if self.mask.is_some() {
+            return false;
+        }
+        let mut mask = Surface::new(self.surface.width(), self.surface.height());
+        mask.fill_coverage(if reveal { 255 } else { 0 });
+        self.mask = Some(mask);
+        true
+    }
+
+    /// Mask coverage at one pixel, `1.0` when the layer has no mask.
+    pub fn coverage_at(&self, x: u32, y: u32) -> f32 {
+        match &self.mask {
+            Some(mask) => mask.pixel(x, y).a() as f32 / 255.0,
+            None => 1.0,
+        }
+    }
+
+    /// Paint a brush segment into the mask instead of the layer.
+    ///
+    /// The dab is forced white, so painting reveals and the eraser hides; the
+    /// brush's shape, hardness, grain and spacing all still apply. The mask's
+    /// own alpha holding the coverage is why a soft brush also gives a soft
+    /// edge to the mask.
+    pub fn paint_mask_segment(
+        &mut self,
+        from: crate::egui::Pos2,
+        to: crate::egui::Pos2,
+        dab: &crate::engine::BrushDab,
+        clip: Option<crate::engine::selection::Clip<'_>>,
+    ) {
+        let Some(mask) = self.mask.as_mut() else {
+            return;
+        };
+        let mut mask_dab = *dab;
+        mask_dab.colour = Color32::WHITE;
+        mask.paint_segment_clipped(from, to, &mask_dab, clip);
     }
 
     pub fn props(&self) -> LayerProps {

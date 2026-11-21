@@ -13,7 +13,7 @@ use crate::egui::Color32;
 use crate::engine::{PixelRegion, Surface};
 
 use super::group::{Group, GroupProps};
-use super::layer::{composite_pixel, composite_pixel_masked, Layer, LayerId, LayerProps};
+use super::layer::{composite_pixel_masked, Layer, LayerId, LayerProps};
 
 /// One row of the stack: a paint layer or a group of layers.
 #[derive(Clone, Debug)]
@@ -78,8 +78,15 @@ impl Entry {
     }
 
     pub fn memory_bytes(&self) -> usize {
+        let pixel = std::mem::size_of::<Color32>();
         match self {
-            Self::Layer(layer) => layer.surface().pixels().len() * std::mem::size_of::<Color32>(),
+            Self::Layer(layer) => {
+                let base = layer.surface().pixels().len() * pixel;
+                let mask = layer
+                    .mask()
+                    .map_or(0, |mask| mask.pixels().len() * pixel);
+                base + mask
+            }
             Self::Group(_) => 0,
         }
     }
@@ -228,6 +235,14 @@ impl LayerStack {
                 Entry::Layer(layer) if layer.id() == id => Some(layer.surface_mut()),
                 _ => None,
             })
+    }
+
+    /// Mutable paint layer, for mask operations.
+    pub fn layer_mut(&mut self, id: LayerId) -> Option<&mut Layer> {
+        self.entries.iter_mut().find_map(|entry| match entry {
+            Entry::Layer(layer) if layer.id() == id => Some(layer),
+            _ => None,
+        })
     }
 
     /// Allocate a new layer (unique id, transparent surface) without inserting it.
@@ -508,6 +523,7 @@ impl LayerStack {
         layer
             .surface_mut()
             .write_region(full_region(self.width, self.height), &pixels);
+        layer.set_mask(source.mask().cloned());
         layer.set_props(props);
         layer.set_group(group);
 
@@ -575,10 +591,21 @@ impl LayerStack {
                     if src.a() == 0 {
                         continue;
                     }
+                    // A mask belongs to the layer, so merging bakes its
+                    // coverage into the pixels rather than moving the mask.
+                    let coverage = source.coverage_at(region.x + col, region.y + row);
+                    if coverage <= 0.0 {
+                        continue;
+                    }
                     let src = if adjusted { adjust.apply(src) } else { src };
                     let slot = row as usize * region.width as usize + col as usize;
-                    merged[slot] =
-                        composite_pixel(merged[slot], src, source.blend(), source.opacity());
+                    merged[slot] = composite_pixel_masked(
+                        merged[slot],
+                        src,
+                        source.blend(),
+                        source.opacity(),
+                        coverage,
+                    );
                 }
             }
             target_surface.write_region(region, &merged);
@@ -783,6 +810,9 @@ impl LayerStack {
         for entry in &mut self.entries {
             if let Entry::Layer(layer) = entry {
                 layer.surface_mut().transform(transform);
+                if let Some(mask) = layer.mask_mut() {
+                    mask.transform(transform);
+                }
             }
         }
 
@@ -816,6 +846,7 @@ fn composite_entry(
     let surface = layer.surface();
     let adjust = layer.adjustment();
     let adjusted = !adjust.is_identity();
+    let mask = layer.mask();
 
     for row in 0..region.height {
         let y = region.y + row;
@@ -825,9 +856,15 @@ fn composite_entry(
             if src.a() == 0 {
                 continue;
             }
+            // The mask multiplies the layer's coverage, so hidden pixels are
+            // skipped entirely instead of being blended at zero strength.
+            let coverage = mask.map_or(1.0, |mask| mask.pixel(x, y).a() as f32 / 255.0);
+            if coverage <= 0.0 {
+                continue;
+            }
             let src = if adjusted { adjust.apply(src) } else { src };
             let index = row as usize * region.width as usize + col as usize;
-            buffer[index] = composite_pixel(buffer[index], src, mode, opacity);
+            buffer[index] = composite_pixel_masked(buffer[index], src, mode, opacity, coverage);
         }
     }
 }
@@ -895,9 +932,17 @@ fn composite_entry_masked(
             if src.a() == 0 {
                 continue;
             }
-            let mask = base.pixel(x, y).a() as f32 / 255.0;
+            // A clipped layer is limited both by the base layer's paint and by
+            // its own mask, so a masked base hides clipped children too.
+            let mut mask = base.pixel(x, y).a() as f32 / 255.0;
             if mask <= 0.0 {
                 continue;
+            }
+            if let Some(own) = layer.mask() {
+                mask *= own.pixel(x, y).a() as f32 / 255.0;
+                if mask <= 0.0 {
+                    continue;
+                }
             }
             let src = if adjusted { adjust.apply(src) } else { src };
             let index = row as usize * region.width as usize + col as usize;

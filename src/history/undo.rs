@@ -88,6 +88,21 @@ pub enum Change {
     /// No pixels are stored: every transform is a lossless permutation, so the
     /// opposite transform restores the document exactly and undo costs nothing.
     Transformed { transform: crate::engine::Transform },
+    /// Pixels inside one layer's mask.
+    MaskPixels {
+        layer: LayerId,
+        patches: Vec<TilePatch>,
+    },
+    /// A mask was added to a layer. A fresh mask is uniform, so redo rebuilds it
+    /// instead of storing a canvas-sized copy.
+    MaskAdded { layer: LayerId, reveal: bool },
+    /// A mask was removed from a layer. The mask itself moves between the
+    /// canvas and this entry, never a copy, so undo costs no extra memory while
+    /// it is undone.
+    MaskRemoved {
+        layer: LayerId,
+        mask: Option<Surface>,
+    },
 }
 
 impl Change {
@@ -100,7 +115,13 @@ impl Change {
             Self::Inserted { entries, .. }
             | Self::Removed { entries, .. }
             | Self::Flattened { entries, .. } => entries.iter().map(Entry::memory_bytes).sum(),
-            Self::Moved { .. } | Self::Transformed { .. } => 0,
+            Self::Moved { .. } | Self::Transformed { .. } | Self::MaskAdded { .. } => 0,
+            Self::MaskPixels { patches, .. } => {
+                patches.iter().map(TilePatch::memory_bytes).sum()
+            }
+            Self::MaskRemoved { mask, .. } => {
+                mask.as_ref().map_or(0, |mask| mask.pixels().len() * pixel)
+            }
             // Only what is actually retained is counted: while an edit is
             // undone, the layer belongs to the canvas and history holds no
             // copy of it.
@@ -224,6 +245,33 @@ impl Edit {
         }
     }
 
+    /// Pixels of one layer's mask changed.
+    pub fn mask_pixels(layer: LayerId, patches: Vec<TilePatch>, label: &'static str) -> Self {
+        Self {
+            label,
+            change: Change::MaskPixels { layer, patches },
+        }
+    }
+
+    /// A mask was added to a layer.
+    pub fn mask_added(layer: LayerId, reveal: bool) -> Self {
+        Self {
+            label: "add layer mask",
+            change: Change::MaskAdded { layer, reveal },
+        }
+    }
+
+    /// A mask was removed from a layer.
+    pub fn mask_removed(layer: LayerId, mask: Surface) -> Self {
+        Self {
+            label: "delete layer mask",
+            change: Change::MaskRemoved {
+                layer,
+                mask: Some(mask),
+            },
+        }
+    }
+
     /// A flip or rotation of the whole document.
     pub fn transformed(transform: crate::engine::Transform) -> Self {
         Self {
@@ -316,6 +364,31 @@ impl Edit {
                 } else {
                     *transform
                 });
+            }
+            Change::MaskPixels { layer, patches } => {
+                for patch in patches.iter().rev() {
+                    if let Some(mask) = canvas.layer_mask_mut(*layer) {
+                        let pixels = if undo { &patch.before } else { &patch.after };
+                        mask.write_region(patch.region, pixels);
+                    }
+                    canvas.invalidate_composite(Some(patch.region));
+                }
+            }
+            Change::MaskAdded { layer, reveal } => {
+                if undo {
+                    canvas.set_layer_mask(*layer, None);
+                } else {
+                    canvas.add_layer_mask(*layer, *reveal);
+                }
+            }
+            Change::MaskRemoved { layer, mask } => {
+                if undo {
+                    if let Some(mask) = mask.take() {
+                        canvas.set_layer_mask(*layer, Some(mask));
+                    }
+                } else {
+                    *mask = canvas.set_layer_mask(*layer, None);
+                }
             }
             Change::Flattened { entries, active } => {
                 if undo {

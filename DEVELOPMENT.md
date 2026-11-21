@@ -3,11 +3,12 @@
 Living document: environment notes, milestone status, architecture decisions,
 verification log and outstanding work. Updated as milestones land.
 
-Last updated: Milestone 8 — the 1.2.0 Windows executable and portable ZIP were
+Last updated: Milestone 8 — the 1.3.0 Windows executable and portable ZIP were
 built, carrying its INKFORGE icon and version resource. Milestone 7 is still
-open (see §7); 1.1.0 added the full W3C blend set and clip to layer below, and
-1.2.0 adds a 43-brush library, live per-layer colour adjustments and
-document flips/rotations.
+open (see §7); 1.1.0 added the full W3C blend set and clip to layer below,
+1.2.0 added a 43-brush library, live per-layer colour adjustments and
+document flips/rotations, and 1.3.0 adds non-destructive layer masks (project
+format version 2).
 
 ---
 
@@ -22,12 +23,12 @@ build):
 | Rust | rustc 1.100.0 (2026-11-09), cargo 1.100.0, installed with rustup (minimal profile) |
 | Crates.io access | Working; `eframe 0.37.0` and its dependency tree resolve and build |
 | Graphics stack available here | No X11/Wayland display and no `sudo` for dev packages, so the window can be compiled but **not launched** in this environment |
-| Windows build | No Windows host and no MSVC linker; the 1.2.0 executable was **cross-compiled on Linux** with `cargo zigbuild` (zig 0.13's bundled MinGW toolchain) for `x86_64-pc-windows-gnu` — see §6 |
+| Windows build | No Windows host and no MSVC linker; the 1.3.0 executable was **cross-compiled on Linux** with `cargo zigbuild` (zig 0.13's bundled MinGW toolchain) for `x86_64-pc-windows-gnu` — see §6 |
 | GUI toolkit | `eframe 0.37` (default renderer family: wgpu) with `egui 0.37` |
 
 **Consequence, stated plainly:** the project targets Windows and builds with
 `x86_64-pc-windows-msvc` on a Windows machine. This container has no Windows and
-no MSVC linker, so the 1.2.0 release was cross-compiled to
+no MSVC linker, so the 1.3.0 release was cross-compiled to
 `x86_64-pc-windows-gnu` with `cargo zigbuild` instead: a real 64-bit Windows GUI
 executable was produced and inspected (§5, §6), but it has **never been run**,
 because nothing here can execute a Windows binary. The clean-machine and artist
@@ -40,7 +41,7 @@ run (the rest of Milestone 8) still has to happen on Windows.
 | 1 | Project init, Rust config, desktop window, main UI | **Done** (compiles clean; window not launched — no display here) |
 | 2 | Interactive canvas, freehand drawing, brush size/colour, eraser | **Done** (compiles clean; painting verified by tests and a simulated pointer drag, not yet by eye) |
 | 3 | Brush presets, stroke smoothing, opacity, better painting engine | **Done** (43 presets in six shelves that differ in size, edge softness, opacity, spacing, grain and smoothing; the stabiliser adapts to pointer speed) |
-| 4 | Layer architecture and layer manager | **Done** (add/delete/reorder/rename, visibility, opacity, 17 blend modes, clip to layer below, live brightness/contrast/saturation/hue per layer, layer-aware undo; verified by tests, not by eye) |
+| 4 | Layer architecture and layer manager | **Done** (add/delete/reorder/rename, visibility, opacity, 17 blend modes, clip to layer below, per-layer masks, live brightness/contrast/saturation/hue per layer, layer-aware undo; verified by tests, not by eye) |
 | 5 | Undo/redo, selection, fill, shapes | **Done** (undo/redo landed early; rectangle selection, flood fill and line/rectangle/ellipse shapes added) |
 | 6 | PNG/JPEG import-export, native `.inkforge`, reliable save/load | **Done** (projects round-trip every layer, group and property; corrupt files are refused with a message; verified by tests, not by hand in the GUI) |
 | 7 | Interface refinement, performance, testing | **In progress** — live window title, recent projects, partial GPU uploads, threaded stamping and the composite tile pyramid landed; see §7 |
@@ -208,6 +209,23 @@ Real, working behaviour (not painted mock-ups):
   base, hiding the base hides its clipped children, and a clipped layer with
   nothing below draws nothing. Clipping is resolved per sibling run, so it also
   works inside a group. It undoes in one step and is written to the manifest.
+* **Layer masks** — a layer can own one full-canvas coverage buffer. The mask
+  stores coverage in its alpha channel (white = visible, black = hidden) and is
+  applied by multiplying the layer's source alpha at composite time
+  (`composite_entry` calls `composite_pixel_masked`), so the layer's pixels are
+  never rewritten. Adding a mask is instant because a fresh mask is uniform
+  (reveal all / hide all); the brush paints the mask with a forced white dab
+  and the eraser removes coverage, which reuses the whole existing rasteriser
+  (hardness, grain, spacing, stabiliser and selection clipping). Invert flips
+  the coverage, and deleting the mask restores the layer exactly.
+* **Mask undo** — three small history entries keep the promise cheap: painting
+  the mask records tiles like any stroke (`MaskPixels`); adding a mask records
+  only how it was created (`MaskAdded`, redo rebuilds the uniform buffer);
+  deleting a mask moves the buffer between the canvas and the history entry
+  (`MaskRemoved`), never copying it. Inverting records the whole-canvas tiles
+  it actually changed. Masks travel with the layer through duplication, a
+  document flip/rotation and merge-down (the merge bakes coverage into pixels),
+  and are saved in the project file.
 * **Lock transparent pixels** — CSP's alpha lock, as a layer property (so it
   undoes in one step like opacity, and older projects load with it off). The
   rasteriser has a locked path: a pixel with zero alpha is skipped, and a
@@ -641,7 +659,7 @@ canvas rotation, pen pressure.
 | Check | Command | Result |
 | --- | --- | --- |
 | Type/compile check, all targets | `cargo check --all-targets` | Passes, 0 errors, 0 warnings |
-| Tests | `cargo test` | Passes — 258 tests, 0 failures (exit 0): 9 model/viewport/brush/transform, 7 painting, 39 layers/groups, 7 layer alpha lock, 16 blend modes, 9 clipping, 16 colour adjustments, 8 history, 7 presets, 6 stabiliser, 50 selection/fill/shapes, 16 headless UI, 9 file I/O, 7 autosave/recovery, 7 recent projects, 11 tile pyramid, 7 surface and stamping performance, 1 pool dispatch, 9 pen pressure/tilt, 2 Win32 pointer layouts, 10 canvas rotation, 8 document transforms |
+| Tests | `cargo test` | Passes — 277 tests, 0 failures (exit 0): 9 model/viewport/brush/transform, 7 painting, 39 layers/groups, 7 layer alpha lock, 16 blend modes, 9 clipping, 12 layer masks, 16 colour adjustments, 8 history, 7 presets, 6 stabiliser, 50 selection/fill/shapes, 16 headless UI, 9 file I/O, 7 autosave/recovery, 7 recent projects, 11 tile pyramid, 7 surface and stamping performance, 1 pool dispatch, 9 pen pressure/tilt, 2 Win32 pointer layouts, 10 canvas rotation, 8 document transforms |
 | Canvas rotation | `cargo test --test view_rotation` | A fresh view is upright; a quarter turn sends the page corners where they look like they go; screen and canvas stay exact inverses at eight angles with zoom and pan applied; cursor-anchored zoom on a turned view does not drift; angles accumulate and wrap into (-180°, 180°]; 1.5° near a quarter turn snaps onto it while a deliberate 0.5 rad is left alone; reset and NaN/infinite input behave; a turned landscape page fits into the window height (0.528 at 1000 × 600) instead of the width; the page rectangle itself is not turned. The turned *rendering* has not been looked at — no display here (§8) |
 | Pen pressure and tilt | `cargo test --test pen` and `cargo test --lib pointer` | A mouse leaves the brush exactly as configured; half pressure paints fainter *and* narrower (a dab's footprint stops short of where full pressure reaches); a feather touch still leaves a line above `MIN_DAB_RADIUS`; 60° of tilt widens a 20 px tip to 26 px without changing opacity, and never pushes the brush past `MAX_SIZE`; 0% amounts and the off switch ignore the pen entirely; a NaN/infinite reading falls back to full pressure; a real stroke driven through `begin_stroke`/`extend_stroke` covers 18 px above its path at full pressure but not at 25%; and the Win32 `POINTER_INFO` / `POINTER_PEN_INFO` sizes and field offsets match the 64-bit SDK. The tablet path itself has **not** run — no pen and no Windows here (§8) |
 | Start state | `cargo test --test ui_smoke` | An untouched canvas paints the "Start painting" card, a simulated drag removes it, and undoing the only stroke brings it back (proving the cached empty check follows the composite revision) |
@@ -670,9 +688,9 @@ canvas rotation, pen pressure.
 | Pointer painting (headless) | `cargo test --test ui_smoke` | A simulated press → move → release over the canvas paints real pixels, marks the document modified and ends the stroke |
 | Undo shortcuts (headless) | `cargo test --test ui_smoke` | After a simulated stroke, a synthetic `Ctrl+Z` removes all paint, the redo stack fills, and `Ctrl+Y` restores the stroke — driven through `InkforgeApp::frame`, the same code path the window uses |
 | Application launch | `cargo run` | **Not possible here** (headless Linux container, no display server) |
-| Windows release build | `cargo zigbuild --release --target x86_64-pc-windows-gnu` | **Passes** (1.2.0, exit 0, 27 s warm): a GUI-subsystem PE32+ x86-64 executable, 12.3 MB, imports only DLLs that ship with Windows 10/11 (`kernel32`, `user32`, `gdi32`, `ole32`, `dxgi`, `dwmapi`, `uxtheme`, `bcryptprimitives`, `api-ms-win-crt-*`) — no VCRUNTIME, MSVCP or libgcc/libstdc++ DLL. The only warning is zig's own libunwind `dllexport` redeclaration, from the toolchain |
-| Portable ZIP | `scripts/package-windows-cross.sh` | **Passes**: `dist/INKFORGE-1.2.0-windows-x86_64/` holds `INKFORGE.exe`, `README.txt` and `LICENSE-MIT.txt`; the ZIP is 5.4 MB and unpacks to exactly those three files |
-| Icon and version metadata in the PE | pefile over `target/x86_64-pc-windows-gnu/release/inkforge.exe` | **Passes, as a file read**: the resource directory holds seven `RT_ICON` images (1 128–33 066 bytes: the 16/24/32/48/64 px bitmaps and the 128/256 px PNGs), one `RT_GROUP_ICON`, and an `RT_VERSION` block whose `VS_FIXEDFILEINFO` has signature `0xFEEF04BD`, file and product version `1.2.0.0`, `VOS_NT_WINDOWS32` and `VFT_APP`; all eight string fields are present (`ProductName` INKFORGE, `FileDescription` "INKFORGE - a digital painting application for artists", `CompanyName`, `FileVersion` 1.2.0, `InternalName`, `LegalCopyright`, `OriginalFilename` INKFORGE.exe, `ProductVersion`). Explorer and Task Manager were **not** opened to look at it (§8) |
+| Windows release build | `cargo zigbuild --release --target x86_64-pc-windows-gnu` | **Passes** (1.3.0, exit 0, 27 s warm): a GUI-subsystem PE32+ x86-64 executable, 12.3 MB, imports only DLLs that ship with Windows 10/11 (`kernel32`, `user32`, `gdi32`, `ole32`, `dxgi`, `dwmapi`, `uxtheme`, `bcryptprimitives`, `api-ms-win-crt-*`) — no VCRUNTIME, MSVCP or libgcc/libstdc++ DLL. The only warning is zig's own libunwind `dllexport` redeclaration, from the toolchain |
+| Portable ZIP | `scripts/package-windows-cross.sh` | **Passes**: `dist/INKFORGE-1.3.0-windows-x86_64/` holds `INKFORGE.exe`, `README.txt` and `LICENSE-MIT.txt`; the ZIP is 5.4 MB and unpacks to exactly those three files |
+| Icon and version metadata in the PE | pefile over `target/x86_64-pc-windows-gnu/release/inkforge.exe` | **Passes, as a file read**: the resource directory holds seven `RT_ICON` images (1 128–33 066 bytes: the 16/24/32/48/64 px bitmaps and the 128/256 px PNGs), one `RT_GROUP_ICON`, and an `RT_VERSION` block whose `VS_FIXEDFILEINFO` has signature `0xFEEF04BD`, file and product version `1.3.0.0`, `VOS_NT_WINDOWS32` and `VFT_APP`; all eight string fields are present (`ProductName` INKFORGE, `FileDescription` "INKFORGE - a digital painting application for artists", `CompanyName`, `FileVersion` 1.2.0, `InternalName`, `LegalCopyright`, `OriginalFilename` INKFORGE.exe, `ProductVersion`). Explorer and Task Manager were **not** opened to look at it (§8) |
 | Running the release on Windows | double-click `INKFORGE.exe` | **Not possible here** (Linux, no Windows, no display); the executable has never been launched — see §8 |
 
 What is therefore verified: the code compiles cleanly against the real
@@ -704,8 +722,18 @@ stroke, and is undone and redone by Ctrl+Z / Ctrl+Y.
   itself is restored exactly.
 * Layer adjustments are applied when a layer is composited, so the eyedropper
   and flood fill see the adjusted colours (they sample the visible image), while
-  merging down bakes them into the target. There is no mask, curves or levels
-  adjustment yet, and no document-wide adjustment layer.
+  merging down bakes them into the target. There are no curves or levels yet,
+  and no document-wide adjustment layer.
+* Masks are layer-only: groups cannot have one, a mask cannot be moved to
+  another layer independently, and there is no mask density or feather control.
+  While mask editing is on, flood fill and shapes refuse with a message instead
+  of silently painting the layer; the brush and eraser are the mask tools.
+  Mask documents are project format version 2, so 1.1.0/1.2.0 builds refuse
+  them (with a "newer INKFORGE" message) rather than misreading the streams;
+  version 1 projects still open in 1.3.0. A mask is a full canvas buffer, so it
+  costs one extra canvas image of memory per masked layer.
+* Layer-mask rendering has been verified at the composite level and through
+  save/load, never by eye on a screen (§8).
 * The 43 brush presets are parameter sets the existing rasteriser understands:
   size, hardness, opacity, spacing, grain and smoothing. There is still no
   stamp-tip or dual-brush engine, so "bristle" and "watercolour" brushes are
@@ -807,7 +835,7 @@ stroke, and is undone and redone by Ctrl+Z / Ctrl+Y.
   PE, not by looking at Windows: the `.ico` images and the `VERSIONINFO` strings
   are present and correct, but how Explorer, the task bar and Task Manager draw
   them at a given DPI, and whether the icon reads well at 16 px on a real
-  desktop, have not been seen. The About dialog shows the same 1.2.0 from the
+  desktop, have not been seen. The About dialog shows the same 1.3.0 from the
   compiled-in crate version.
 * The ZIP is unsigned. A downloaded copy will raise a SmartScreen warning on
   first run unless it is code-signed, which it is not.
@@ -881,7 +909,7 @@ The icon is drawn by `python3 scripts/make-icon.py`, which writes
 
 ### 6b. Cross-compiling the release from Linux
 
-This is how 1.2.0 was actually produced here, since the container has no
+This is how 1.3.0 was actually produced here, since the container has no
 Windows and no MSVC linker:
 
 ```bash
@@ -918,12 +946,13 @@ Milestone 7, remaining:
 
 1. Interface refinement: **start state landed**; tooltips were written and
    exercised headlessly, but still need a look on a real screen.
-2. Comfort features that need no new file formats: **canvas rotation landed**;
-   image transforms (flipping and turning the artwork itself, with the
-   selection following it) are still to come. Canvas rotation is view state: it
-   never rotates the pixels, so saving, exporting and reopening are unaffected.
-   (Dragging layers into and out of groups, and the magic wand, landed with this
-   item too.)
+2. Comfort features that need no new file formats: **canvas rotation landed**
+   and so did image transforms — flipping and turning the artwork itself, with
+   every layer and mask permuted losslessly. Still to come: the selection
+   following a transform, and scaling/skewing a layer or a selection. Canvas
+   rotation is view state: it never rotates the pixels, so saving, exporting
+   and reopening are unaffected. (Dragging layers into and out of groups, the
+   magic wand and layer masks landed with this item too.)
 3. Wider test coverage of the UI paths added in Milestone 6 (save prompts,
    keyboard shortcuts, error dialogs) and a pass over DEVELOPMENT.md to keep it
    current.

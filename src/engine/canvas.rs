@@ -291,6 +291,78 @@ impl Canvas {
         self.stack.surface_mut(id)
     }
 
+    // ---- layer masks ---------------------------------------------------
+
+    /// True when this layer has a mask.
+    pub fn layer_has_mask(&self, id: LayerId) -> bool {
+        self.stack.layer(id).is_some_and(Layer::has_mask)
+    }
+
+    /// A layer's mask, if it has one.
+    pub fn layer_mask(&self, id: LayerId) -> Option<&Surface> {
+        self.stack.layer(id).and_then(Layer::mask)
+    }
+
+    /// Mutable mask pixels, used by undo/redo. Marks the document modified.
+    pub fn layer_mask_mut(&mut self, id: LayerId) -> Option<&mut Surface> {
+        self.modified = true;
+        self.stack.layer_mut(id).and_then(Layer::mask_mut)
+    }
+
+    /// Install or remove a mask, returning the one that was there before.
+    pub fn set_layer_mask(&mut self, id: LayerId, mask: Option<Surface>) -> Option<Surface> {
+        let previous = self
+            .stack
+            .layer_mut(id)
+            .map(|layer| layer.set_mask(mask))?;
+        self.modified = true;
+        self.invalidate_composite(None);
+        previous
+    }
+
+    /// Create a full-canvas mask (`reveal` shows all, otherwise hides all).
+    pub fn add_layer_mask(&mut self, id: LayerId, reveal: bool) -> bool {
+        let added = self
+            .stack
+            .layer_mut(id)
+            .is_some_and(|layer| layer.add_mask(reveal));
+        if added {
+            self.modified = true;
+            self.invalidate_composite(None);
+        }
+        added
+    }
+
+    /// Invert a mask's coverage; returns the whole-canvas region it changed.
+    pub fn invert_layer_mask(&mut self, id: LayerId) -> Option<PixelRegion> {
+        let mask = self.stack.layer_mut(id).and_then(Layer::mask_mut)?;
+        mask.invert_coverage();
+        self.modified = true;
+        let region = PixelRegion {
+            x: 0,
+            y: 0,
+            width: self.width,
+            height: self.height,
+        };
+        self.invalidate_composite(Some(region));
+        Some(region)
+    }
+
+    /// Paint a brush segment into one layer's mask and mark the changed
+    /// rectangle for recompositing. The layer's pixels are untouched.
+    pub fn paint_layer_mask(&mut self, id: LayerId, from: Pos2, to: Pos2, dab: &BrushDab) {
+        let clip = self.selection.as_ref().map(Selection::clip);
+        let Some(layer) = self.stack.layer_mut(id) else {
+            return;
+        };
+        layer.paint_mask_segment(from, to, dab, clip);
+
+        if let Some(region) = segment_bounds(from, to, dab.radius, self.width, self.height) {
+            self.stack.invalidate(region);
+        }
+        self.modified = true;
+    }
+
     // ---- selection -----------------------------------------------------
 
     pub fn selection(&self) -> Option<&Selection> {

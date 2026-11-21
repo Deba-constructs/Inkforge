@@ -631,6 +631,8 @@ struct RowSnap {
     opacity: f32,
     /// "Lock transparent pixels" is on for this layer.
     alpha_locked: bool,
+    /// The layer has a mask.
+    has_mask: bool,
     collapsed: bool,
     /// A line drawn in place of the children of a group that has none.
     placeholder: bool,
@@ -655,6 +657,7 @@ fn snapshot_rows(app: &InkforgeApp) -> Vec<RowSnap> {
                     visible: group.visible(),
                     opacity: group.opacity(),
                     alpha_locked: false,
+                    has_mask: false,
                     collapsed: group.collapsed(),
                     placeholder: false,
                 });
@@ -678,6 +681,9 @@ fn snapshot_rows(app: &InkforgeApp) -> Vec<RowSnap> {
                                     alpha_locked: entry
                                         .as_layer()
                                         .is_some_and(|layer| layer.alpha_locked()),
+                                    has_mask: entry
+                                        .as_layer()
+                                        .is_some_and(|layer| layer.has_mask()),
                                     collapsed: false,
                                     placeholder: false,
                                 });
@@ -698,6 +704,7 @@ fn snapshot_rows(app: &InkforgeApp) -> Vec<RowSnap> {
                             visible: group.visible(),
                             opacity: group.opacity(),
                             alpha_locked: false,
+                            has_mask: false,
                             collapsed: false,
                             placeholder: true,
                         });
@@ -715,6 +722,7 @@ fn snapshot_rows(app: &InkforgeApp) -> Vec<RowSnap> {
                     visible: layer.visible(),
                     opacity: layer.opacity(),
                     alpha_locked: layer.alpha_locked(),
+                    has_mask: layer.has_mask(),
                     collapsed: false,
                     placeholder: false,
                 });
@@ -894,6 +902,28 @@ fn layer_row(app: &mut InkforgeApp, ui: &mut egui::Ui, row: &RowSnap, selected: 
             if row.visible { theme::TEXT } else { theme::TEXT_MUTED },
         );
     }
+    // A mask badge: a half-filled square, the conventional mask glyph.
+    if row.has_mask {
+        let badge = Rect::from_center_size(
+            Pos2::new(rect.right() - 68.0, rect.center().y),
+            Vec2::splat(11.0),
+        );
+        painter.rect_stroke(
+            badge,
+            CornerRadius::same(2),
+            Stroke::new(1.0, theme::with_alpha(theme::ACCENT, 220)),
+            egui::StrokeKind::Inside,
+        );
+        painter.rect_filled(
+            Rect::from_min_size(
+                badge.min + Vec2::splat(2.0),
+                Vec2::new(badge.width() / 2.0 - 2.5, badge.height() - 4.0),
+            ),
+            CornerRadius::same(1),
+            theme::with_alpha(theme::ACCENT, 220),
+        );
+    }
+
     // A locked layer wears a small padlock, so the state is visible without
     // selecting the row.
     if row.alpha_locked {
@@ -1236,7 +1266,72 @@ fn layer_properties(app: &mut InkforgeApp, ui: &mut egui::Ui) {
     }
 
     ui.add_space(6.0);
+    mask_controls(app, ui, id);
+
+    ui.add_space(6.0);
     adjustment_controls(app, ui, id, props.adjust);
+}
+
+/// Layer mask controls: create, edit, invert or delete the mask.
+///
+/// A mask never changes the layer's pixels, so every button here is fully
+/// reversible; painting the mask is what hides or reveals parts of the layer.
+fn mask_controls(app: &mut InkforgeApp, ui: &mut egui::Ui, id: LayerId) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Layer mask").size(11.5).color(theme::TEXT_MUTED));
+    });
+
+    if app.canvas.layer_has_mask(id) {
+        let mut editing = app.edit_mask;
+        if ui
+            .checkbox(&mut editing, RichText::new("Edit mask").size(11.5))
+            .on_hover_text(
+                "The brush reveals and the eraser hides. The layer's own pixels are \
+                 never touched, so nothing is lost",
+            )
+            .changed()
+        {
+            app.set_edit_mask(editing);
+        }
+
+        ui.horizontal(|ui| {
+            if ui
+                .button(RichText::new("Invert").size(11.0))
+                .on_hover_text("Swap hidden and visible areas")
+                .clicked()
+            {
+                app.invert_layer_mask(id);
+            }
+            if ui
+                .button(RichText::new("Delete mask").size(11.0))
+                .on_hover_text("Remove the mask; every pixel is still there")
+                .clicked()
+            {
+                app.delete_layer_mask(id);
+            }
+        });
+
+        ui.label(theme::pending_note(
+            "White areas are visible, black areas are hidden.",
+        ));
+    } else {
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .button(RichText::new("Add mask (reveal all)").size(11.0))
+                .on_hover_text("Hide parts of this layer later with the eraser")
+                .clicked()
+            {
+                app.add_layer_mask(id, true);
+            }
+            if ui
+                .button(RichText::new("Add mask (hide all)").size(11.0))
+                .on_hover_text("Paint white to reveal parts of this layer")
+                .clicked()
+            {
+                app.add_layer_mask(id, false);
+            }
+        });
+    }
 }
 
 /// Live colour adjustment sliders for the active layer.

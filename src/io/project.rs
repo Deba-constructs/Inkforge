@@ -32,7 +32,11 @@ use super::straight_rgba;
 /// with a clear message instead of a confusing parse error.
 pub const MAGIC: &[u8; 8] = b"INKFORGE";
 /// Format version written by this build.
-pub const FORMAT_VERSION: u32 = 1;
+///
+/// Version 2 adds an optional mask stream after each layer's pixels. Version 1
+/// files (no masks) still load; a version 1 build refuses a version 2 file
+/// instead of misreading the mask as the next layer.
+pub const FORMAT_VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize)]
 struct Manifest {
@@ -74,6 +78,10 @@ struct LayerDto {
     adjust: AdjustmentDto,
     /// Length of this layer's PNG stream, in bytes.
     image: u32,
+    /// Length of this layer's mask stream, in bytes; 0 means no mask. Older
+    /// projects have no such field and load without masks.
+    #[serde(default)]
+    mask: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -187,6 +195,10 @@ pub fn save_project(path: &Path, canvas: &Canvas) -> Result<(), String> {
         match entry {
             Entry::Layer(layer) => {
                 let png = encode_layer(layer.surface())?;
+                let mask = match layer.mask() {
+                    Some(mask) => encode_mask(mask)?,
+                    None => Vec::new(),
+                };
                 entries.push(EntryDto::Layer(LayerDto {
                     id: layer.id(),
                     name: layer.name().to_owned(),
@@ -198,8 +210,14 @@ pub fn save_project(path: &Path, canvas: &Canvas) -> Result<(), String> {
                     clip_to_below: layer.clip_to_below(),
                     adjust: layer.adjustment().into(),
                     image: png.len() as u32,
+                    mask: mask.len() as u32,
                 }));
                 images.push(png);
+                // A mask always follows its layer's pixels, so the reader can
+                // walk the streams in manifest order without an index.
+                if !mask.is_empty() {
+                    images.push(mask);
+                }
             }
             Entry::Group(group) => entries.push(EntryDto::Group(GroupDto {
                 id: group.id(),
@@ -298,6 +316,22 @@ pub fn load_project(path: &Path) -> Result<Canvas, String> {
                 let png = &bytes[offset..offset + length];
                 offset += length;
 
+                // The mask (if any) follows this layer's pixels.
+                let mask_length = layer.mask as usize;
+                let mask = if mask_length > 0 {
+                    if offset + mask_length > bytes.len() {
+                        return Err(format!(
+                            "The project file is truncated: the mask of \"{}\" is missing.",
+                            layer.name
+                        ));
+                    }
+                    let stream = &bytes[offset..offset + mask_length];
+                    offset += mask_length;
+                    Some(decode_mask(stream, width, height, &layer.name)?)
+                } else {
+                    None
+                };
+
                 let decoded = image::load_from_memory(png)
                     .map_err(|error| {
                         format!("The pixels of \"{}\" are damaged: {error}", layer.name)
@@ -329,6 +363,7 @@ pub fn load_project(path: &Path) -> Result<Canvas, String> {
                     },
                     &pixels,
                 );
+                created.set_mask(mask);
                 created.set_props(LayerProps {
                     name: layer.name,
                     visible: layer.visible,
@@ -371,6 +406,67 @@ fn encode_layer(surface: &Surface) -> Result<Vec<u8>, String> {
         )
         .map_err(|error| format!("Could not encode a layer as PNG: {error}"))?;
     Ok(out)
+}
+
+/// Encode a mask as a tiny grey+alpha PNG; only the alpha channel carries the
+/// coverage, so two bytes per pixel are enough.
+fn encode_mask(mask: &Surface) -> Result<Vec<u8>, String> {
+    let mut grey = Vec::with_capacity(mask.pixels().len() * 2);
+    for pixel in mask.pixels() {
+        let coverage = pixel.a();
+        grey.push(coverage);
+        grey.push(coverage);
+    }
+
+    let mut out = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut out)
+        .write_image(
+            &grey,
+            mask.width(),
+            mask.height(),
+            ExtendedColorType::La8,
+        )
+        .map_err(|error| format!("Could not encode a layer mask as PNG: {error}"))?;
+    Ok(out)
+}
+
+/// Decode a mask stream back into white pixels whose alpha is the coverage.
+fn decode_mask(
+    stream: &[u8],
+    width: u32,
+    height: u32,
+    layer_name: &str,
+) -> Result<Surface, String> {
+    let decoded = image::load_from_memory(stream)
+        .map_err(|error| format!("The mask of \"{layer_name}\" is damaged: {error}"))?
+        .to_rgba8();
+    if decoded.width() != width || decoded.height() != height {
+        return Err(format!(
+            "The mask of \"{layer_name}\" is {} × {} but the canvas is {width} × {height}.",
+            decoded.width(),
+            decoded.height()
+        ));
+    }
+
+    let mut mask = Surface::new(width, height);
+    let pixels: Vec<Color32> = decoded
+        .as_raw()
+        .chunks_exact(4)
+        .map(|pixel| {
+            let coverage = pixel[3];
+            Color32::from_rgba_premultiplied(coverage, coverage, coverage, coverage)
+        })
+        .collect();
+    mask.write_region(
+        PixelRegion {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        },
+        &pixels,
+    );
+    Ok(mask)
 }
 
 /// Write through a sibling temp file so an interrupted save cannot leave the

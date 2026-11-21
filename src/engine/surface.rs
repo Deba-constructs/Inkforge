@@ -148,6 +148,40 @@ impl Surface {
         self.revision = self.revision.wrapping_add(1);
     }
 
+    /// Fill the whole surface with white at a uniform coverage.
+    ///
+    /// A layer mask stores its coverage in the alpha channel, so "reveal all"
+    /// is `255` and "hide all" is `0`. Premultiplied white at coverage `a` is
+    /// exactly `(a, a, a, a)`, which keeps the buffer consistent with the
+    /// straight-alpha PNG it is saved as.
+    pub fn fill_coverage(&mut self, coverage: u8) {
+        self.pixels.fill(Color32::from_rgba_premultiplied(
+            coverage, coverage, coverage, coverage,
+        ));
+        self.mark_dirty(PixelRegion {
+            x: 0,
+            y: 0,
+            width: self.width,
+            height: self.height,
+        });
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    /// Invert a mask's coverage: white becomes black and black becomes white.
+    pub fn invert_coverage(&mut self) {
+        for pixel in &mut self.pixels {
+            let coverage = 255 - pixel.a();
+            *pixel = Color32::from_rgba_premultiplied(coverage, coverage, coverage, coverage);
+        }
+        self.mark_dirty(PixelRegion {
+            x: 0,
+            y: 0,
+            width: self.width,
+            height: self.height,
+        });
+        self.revision = self.revision.wrapping_add(1);
+    }
+
     /// True when nothing has been painted.
     pub fn is_empty(&self) -> bool {
         self.pixels.iter().all(|pixel| pixel.a() == 0)

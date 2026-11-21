@@ -33,6 +33,10 @@ What it does
 * Flip the whole document horizontally or vertically, or rotate it 90° either
   way or 180°, from the Image menu. Every layer turns with it, nothing is
   resampled, and undo puts it back the way it was.
+* Layer masks: select a layer and add a mask from the Layer panel; choose
+  "reveal all" and paint black with the eraser, or "hide all" and paint white
+  with the brush. White areas are visible, black areas hidden. Invert or delete
+  the mask at any time - the layer's pixels are never destroyed.
 * Clip a layer to the one below it (alpha inheritance): the layer keeps its
   colours, opacity and blend mode but can only show where the layer underneath
   has paint, so a multiply shadow stays inside the flat colour it belongs to.

@@ -373,7 +373,7 @@ fn a_project_without_an_adjustment_loads_neutral() {
     // Projects written before adjustments existed have no `adjust` field; the
     // serde default must be neutral, not "everything grey".
     let path = temp_path("legacy");
-    let mut canvas = Canvas::try_new("legacy", 16, 16, Background::White).expect("canvas");
+    let canvas = Canvas::try_new("legacy", 16, 16, Background::White).expect("canvas");
     inkforge::io::save_project(&path, &canvas).expect("save");
     let id = canvas.active_layer_id().expect("layer");
 

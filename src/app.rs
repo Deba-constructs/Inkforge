@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 use inkforge::egui::{Color32, Context, Key, Modifiers, Pos2, ViewportCommand};
 
 use crate::engine::{
-    Background, BrushDab, BrushSettings, Canvas, PenSample, PenSettings, Selection, SelectionMode,
-    ShapeKind, Stabilizer, ThumbnailCache, TilePyramid, Viewport, MAX_FEATHER,
+    Background, BrushDab, BrushSettings, Canvas, PenSample, PenSettings, PixelRegion, Selection,
+    SelectionMode, ShapeKind, Stabilizer, ThumbnailCache, TilePyramid, Viewport, MAX_FEATHER,
 };
 use crate::history::{Edit, History, Recorder};
 use crate::io::{self, recent, recovery, ImageFormat, RecoveryInfo};
@@ -187,6 +187,8 @@ pub struct StrokeState {
     /// Speed-adaptive smoothing of the pointer path.
     stabilizer: Stabilizer,
     erase: bool,
+    /// True when the stroke paints the layer's mask instead of its pixels.
+    mask: bool,
 }
 
 /// State of a stroke that paints the selection instead of a layer, while the
@@ -257,6 +259,9 @@ pub struct InkforgeApp {
     pub name_field: Option<NameField>,
     /// Shape drawn by the Shape tool.
     pub shape: ShapeKind,
+    /// When on and the active layer has a mask, the brush and eraser paint the
+    /// mask instead of the layer's pixels.
+    pub edit_mask: bool,
     /// Largest per-channel difference the fill tool treats as the same colour.
     pub fill_tolerance: u8,
     /// Largest per-channel difference the magic wand treats as the same colour.
@@ -349,6 +354,7 @@ impl InkforgeApp {
             rename: None,
             name_field: None,
             shape: ShapeKind::default(),
+            edit_mask: false,
             fill_tolerance: 24,
             wand_tolerance: 24,
             quick_mask: false,
@@ -523,19 +529,35 @@ impl InkforgeApp {
             return;
         };
 
+        // Mask editing only engages when the layer actually has a mask; a
+        // layer without one keeps painting normally.
+        let painting_mask = self.edit_mask && self.canvas.layer_has_mask(layer);
+
         // Capture the "before" pixels first so this stroke can be undone.
         let mut recorder = Recorder::new();
-        if let Some(surface) = self.canvas.layer_surface(layer) {
+        let target = if painting_mask {
+            self.canvas.layer_mask(layer)
+        } else {
+            self.canvas.layer_surface(layer)
+        };
+        if let Some(surface) = target {
             recorder.record_segment(surface, canvas_pos, canvas_pos, dab.radius);
         }
         self.recorder = Some(recorder);
 
-        self.canvas.paint_layer(layer, canvas_pos, canvas_pos, &dab);
+        if painting_mask {
+            self.canvas
+                .paint_layer_mask(layer, canvas_pos, canvas_pos, &dab);
+            self.set_status("Painting the layer mask — white reveals, the eraser hides.");
+        } else {
+            self.canvas.paint_layer(layer, canvas_pos, canvas_pos, &dab);
+        }
 
         self.stroke = Some(StrokeState {
             last: canvas_pos,
             stabilizer: Stabilizer::begin(canvas_pos),
             erase,
+            mask: painting_mask,
             layer,
         });
     }
@@ -587,14 +609,24 @@ impl InkforgeApp {
         let smoothed = state.stabilizer.push(canvas_pos, self.brush.smoothing());
         let dab = self.current_dab(state.erase);
 
+        let target = if state.mask {
+            self.canvas.layer_mask(state.layer)
+        } else {
+            self.canvas.layer_surface(state.layer)
+        };
         if let Some(recorder) = self.recorder.as_mut() {
-            if let Some(surface) = self.canvas.layer_surface(state.layer) {
+            if let Some(surface) = target {
                 recorder.record_segment(surface, state.last, smoothed, dab.radius);
             }
         }
 
-        self.canvas
-            .paint_layer(state.layer, state.last, smoothed, &dab);
+        if state.mask {
+            self.canvas
+                .paint_layer_mask(state.layer, state.last, smoothed, &dab);
+        } else {
+            self.canvas
+                .paint_layer(state.layer, state.last, smoothed, &dab);
+        }
 
         state.last = smoothed;
         self.stroke = Some(state);
@@ -620,14 +652,30 @@ impl InkforgeApp {
         let Some(state) = self.stroke else {
             return;
         };
-        let label = if state.erase { "erase" } else { "brush stroke" };
+        let label = if state.erase {
+            "erase"
+        } else if state.mask {
+            "paint layer mask"
+        } else {
+            "brush stroke"
+        };
 
-        let patches = match self.canvas.layer_surface(state.layer) {
+        let target = if state.mask {
+            self.canvas.layer_mask(state.layer)
+        } else {
+            self.canvas.layer_surface(state.layer)
+        };
+        let patches = match target {
             Some(surface) => recorder.finish(surface),
             None => Vec::new(),
         };
         if !patches.is_empty() {
-            self.history.push(Edit::pixels(state.layer, patches, label));
+            let edit = if state.mask {
+                Edit::mask_pixels(state.layer, patches, label)
+            } else {
+                Edit::pixels(state.layer, patches, label)
+            };
+            self.history.push(edit);
         }
 
         self.stroke = None;
@@ -974,6 +1022,7 @@ impl InkforgeApp {
         self.selection_drag = None;
         self.lasso_points = None;
         self.shape_drag = None;
+        self.edit_mask = false;
         self.history.clear();
         self.view.request_fit();
         // Whatever was in the slot belonged to the document being replaced.
@@ -1365,6 +1414,84 @@ impl InkforgeApp {
         self.update_layer_props(id, "clip to layer below", |props| {
             props.clip_to_below = clip
         });
+    }
+
+    /// Turn mask editing on or off for the active layer.
+    ///
+    /// While it is on, the brush and eraser paint the layer's mask rather than
+    /// its pixels, so an artist can hide and reveal parts of the artwork
+    /// without deleting anything.
+    pub fn set_edit_mask(&mut self, on: bool) {
+        self.end_stroke();
+        self.edit_mask = on;
+        if on {
+            self.set_status(
+                "Mask editing on — brush reveals, eraser hides. Fill and shapes still \
+                 paint the layer.",
+            );
+        } else {
+            self.set_status("Mask editing off — painting the layer again.");
+        }
+    }
+
+    /// Add a mask to one layer (`reveal` shows the whole layer, otherwise hides
+    /// it) as one undo step.
+    pub fn add_layer_mask(&mut self, id: LayerId, reveal: bool) {
+        self.end_stroke();
+        if self.canvas.layer_has_mask(id) {
+            self.set_status("This layer already has a mask.");
+            return;
+        }
+        if self.canvas.add_layer_mask(id, reveal) {
+            self.history.push(Edit::mask_added(id, reveal));
+            self.edit_mask = true;
+            self.set_status(if reveal {
+                "Added a layer mask (reveal all) — paint black with the eraser to hide."
+            } else {
+                "Added a layer mask (hide all) — paint white with the brush to reveal."
+            });
+        }
+    }
+
+    /// Delete a layer's mask as one undo step. The pixels were never touched,
+    /// so the layer comes back exactly as it was.
+    pub fn delete_layer_mask(&mut self, id: LayerId) {
+        self.end_stroke();
+        if let Some(mask) = self.canvas.set_layer_mask(id, None) {
+            self.history.push(Edit::mask_removed(id, mask));
+            self.edit_mask = false;
+            self.set_status("Deleted the layer mask.");
+        }
+    }
+
+    /// Invert a layer's mask (white ↔ black) as one undo step.
+    pub fn invert_layer_mask(&mut self, id: LayerId) {
+        self.end_stroke();
+        let region = PixelRegion {
+            x: 0,
+            y: 0,
+            width: self.canvas.width(),
+            height: self.canvas.height(),
+        };
+        let mut recorder = Recorder::new();
+        let Some(mask) = self.canvas.layer_mask(id) else {
+            return;
+        };
+        recorder.record_region(mask, region);
+
+        if self.canvas.invert_layer_mask(id).is_none() {
+            return;
+        }
+
+        let patches = match self.canvas.layer_mask(id) {
+            Some(mask) => recorder.finish(mask),
+            None => Vec::new(),
+        };
+        if !patches.is_empty() {
+            self.history
+                .push(Edit::mask_pixels(id, patches, "invert layer mask"));
+            self.set_status("Inverted the layer mask.");
+        }
     }
 
     /// Set the live colour adjustment of one layer.
@@ -1777,6 +1904,14 @@ impl InkforgeApp {
             return;
         };
 
+        if self.edit_mask && self.canvas.layer_has_mask(layer) {
+            self.set_status(
+                "Mask editing is on: turn it off to draw shapes on the layer. The brush \
+                 and eraser are the mask tools.",
+            );
+            return;
+        }
+
         let dab = self.brush.dab(self.color, false);
         let Some(region) = self
             .canvas
@@ -1809,6 +1944,14 @@ impl InkforgeApp {
             self.set_status("Select a layer to fill.");
             return;
         };
+
+        if self.edit_mask && self.canvas.layer_has_mask(layer) {
+            self.set_status(
+                "Mask editing is on: turn it off to fill the layer. The brush and eraser \
+                 are the mask tools.",
+            );
+            return;
+        }
 
         let Some(mask) = self.canvas.fill_mask_at(at, self.fill_tolerance) else {
             self.set_status("Nothing to fill there.");

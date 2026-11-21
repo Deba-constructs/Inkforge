@@ -7,7 +7,7 @@
 A desktop digital painting application for artists, written in Rust with
 `egui`/`eframe` and a GPU (wgpu) renderer.
 
-**Download for Windows** — the [1.2.0 release](https://github.com/Deba-constructs/Inkforge/releases/latest)
+**Download for Windows** — the [1.3.0 release](https://github.com/Deba-constructs/Inkforge/releases/latest)
 is a portable ZIP: unzip it, double-click `INKFORGE.exe`, nothing to install
 and no runtime to set up.
 
@@ -16,16 +16,16 @@ INKFORGE is built milestone by milestone. This repository currently contains
 (freehand strokes with real colour, size, opacity, hardness, spacing, grain and
 speed-adaptive stabilisation), an eraser, an eyedropper, 43 built-in brush
 presets in six shelves, a real layer stack with groups, visibility, opacity,
-reordering, 17 blending modes, live colour adjustments, clipping to the layer
-below and a per-layer transparency lock, flips and rotations of the whole
-document, rectangle, freehand and magic-wand selections with feathering that clip
+reordering, 17 blending modes, live colour adjustments, per-layer masks that
+hide and reveal artwork without deleting it, clipping to the layer below and a
+per-layer transparency lock, flips and rotations of the whole document, rectangle, freehand and magic-wand selections with feathering that clip
 every edit, a flood fill, line / rectangle / ellipse shapes, undo/redo covering all of
 it, and real file I/O: `.inkforge` projects that keep every layer, plus PNG and
 JPEG opening, importing and export, a window title that tracks the document and
 its unsaved state, a recent-projects menu, GPU uploads that copy only the part
 of the canvas that changed, canvas rotation that turns the sheet like a drawing
 board, and large brushes stamped across several CPU cores.
-The rest of the polish pass is next. Version 1.2.0 has been built into a
+The rest of the polish pass is next. Version 1.3.0 has been built into a
 portable Windows executable and packaged as a downloadable ZIP (see
 [Release package](#release-package)). See
 [DEVELOPMENT.md](DEVELOPMENT.md) for the exact state of every feature.
@@ -43,6 +43,7 @@ portable Windows executable and packaged as a downloadable ZIP (see
 | Eyedropper | Working (samples the artwork, falls back to the canvas background) |
 | Undo / redo of strokes, erases and layer changes (`Ctrl+Z`, `Ctrl+Y`, `Ctrl+Shift+Z`) | Working; history is capped at 256 MB, drops the oldest edits, and moves layers between the document and history instead of copying them |
 | Layers: add, delete, reorder (buttons or dragging rows), duplicate, merge down, flatten, rename (double-click a row), show/hide, opacity, 17 blend modes, Clip to layer below and Lock transparent pixels | Working; rows show a live thumbnail (and a padlock when locked), painting always lands on the selected layer and strokes are clipped to it, and on a locked layer paint only recolours pixels that already exist — the eraser cannot take paint away |
+| Layer masks: add a mask that reveals or hides the whole layer, paint it with the brush (reveal) and eraser (hide), invert it, delete it | Working; the mask is a separate coverage buffer, so no pixel is ever destroyed: delete the mask and the layer is exactly as it was. A half-filled mask badge marks the row, mask editing is a checkbox in the layer panel, and adding, painting, inverting and deleting all undo. Fill and shapes deliberately refuse while mask editing is on, with a message pointing at the brush |
 | Colour adjustment per layer: brightness, contrast, saturation and hue sliders with Reset | Working; applied live while the layer is composited, so the pixels are never rewritten, the sliders undo and redo like any other layer property, and the values travel in the project file |
 | Image transforms: flip horizontal / vertical and rotate 90° clockwise / counter-clockwise / 180° | Working from the Image menu; every layer is permuted losslessly (nothing is resampled), a quarter turn swaps the canvas dimensions, and undo applies the opposite transform rather than storing a copy of the canvas — any selection is cleared, because it was described in the old coordinates |
 | Layer groups: group a layer, add more layers into it, collapse/expand, double-click to rename, group visibility and opacity | Working; group opacity and visibility apply to every layer inside, an empty folder shows where to drag a layer, and painting needs a layer selected rather than the group |
@@ -75,8 +76,13 @@ These are the gaps, and the table above does not paper over them:
 
 * **No image transform.** A layer or selection cannot be scaled, flipped,
   skewed or rotated as artwork — canvas rotation turns the view, not the paint.
-* **No layer masks.** Clipping to the layer below works, but there are no
-  greyscale layer or group masks and no adjustment layers yet.
+* **Masks are layer-only.** A layer can have one mask (reveal/hide, painted
+  with the brush and eraser), but groups cannot, a mask cannot be moved to
+  another layer on its own, and there is no mask density or feather control.
+  Adjustment layers with curves or levels are not implemented.
+* **The project format is version 2.** Masks live in it, so a 1.3.0 file opens
+  in 1.1.0/1.2.0 only if those builds refuse it — they do, with a clear "made by
+  a newer INKFORGE" message. Version 1 projects still open in 1.3.0.
 * **The Windows executable is unsigned**, so SmartScreen warns the first time it
   runs. Choose *More info ▸ Run anyway*, or build it yourself.
 * **The pen path has not met a real tablet.** Pressure and tilt are implemented
@@ -104,8 +110,8 @@ the Rust runtime is statically linked, so end users need no Rust installation.
 
 ### Release package
 
-`1.2.0` is published on the [releases page](https://github.com/Deba-constructs/Inkforge/releases/latest)
-as `INKFORGE-1.2.0-windows-x86_64.zip` (5.4 MB). It holds `INKFORGE.exe`
+`1.3.0` is published on the [releases page](https://github.com/Deba-constructs/Inkforge/releases/latest)
+as `INKFORGE-1.3.0-windows-x86_64.zip` (5.4 MB). It holds `INKFORGE.exe`
 (12.3 MB, 64-bit Windows GUI executable), a `README.txt` for the artist and the
 licence, and the release notes list its SHA-256. Nothing needs installing: unzip
 it and run the executable. The two scripts below rebuild the same ZIP locally
@@ -126,7 +132,7 @@ Both scripts write the same layout: a portable folder under `dist/` and its
 (`kernel32`, `user32`, `d3d`/`dxgi`, `dwmapi`, the `api-ms-win-crt-*` runtime),
 so no Visual C++ redistributable or MinGW runtime is needed. The executable
 carries its own icon (seven sizes, 16 to 256 px) and version metadata, so
-Explorer, the task bar and Task Manager show **INKFORGE 1.2.0** instead of a
+Explorer, the task bar and Task Manager show **INKFORGE 1.3.0** instead of a
 generic binary.
 
 Both packaging scripts go through `build.rs`, which compiles
@@ -192,7 +198,7 @@ src/
 ├── history/
 │   └── undo.rs        tile-based undo/redo with a memory cap
 ├── io/
-│   ├── project.rs     the .inkforge container: JSON manifest + PNG layers
+│   ├── project.rs     the .inkforge container: JSON manifest + PNG layers and masks
 │   ├── raster.rs      PNG/JPEG decode, flatten-and-export, image import
 │   ├── recent.rs      the persisted recent-projects list
 │   └── recovery.rs    autosave slot, sidecar metadata, crash recovery
@@ -215,6 +221,7 @@ tests/
 ├── presets.rs         preset round-tripping, 43 distinct marks, spacing, grain
 ├── adjustments.rs     brightness/contrast/saturation/hue, undo, save, merge
 ├── transform.rs       flip/rotate pixel mapping, lossless inverse, save, undo
+├── masks.rs           layer masks: compositing, painting, invert, undo, save
 ├── stabilizer.rs      smoothing, lag limit, pass-through
 ├── pen.rs             pressure/tilt mapping, mouse fallback, bad readings
 ├── io.rs              project round trips, corrupt files, PNG/JPEG export and import
