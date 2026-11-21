@@ -108,6 +108,35 @@ impl Surface {
         }
     }
 
+    /// Flip or rotate the whole surface, in place.
+    ///
+    /// The pixels are permuted, never resampled, so the result is lossless and
+    /// the inverse transform returns exactly the original bytes.
+    pub fn transform(&mut self, transform: super::Transform) {
+        let (width, height) = (self.width, self.height);
+        let (out_width, out_height) = transform.output_size(width, height);
+        let mut pixels = vec![Color32::TRANSPARENT; out_width as usize * out_height as usize];
+
+        for y in 0..out_height {
+            for x in 0..out_width {
+                let (sx, sy) = transform.source_pixel(x, y, width, height);
+                pixels[y as usize * out_width as usize + x as usize] =
+                    self.pixels[sy as usize * width as usize + sx as usize];
+            }
+        }
+
+        self.width = out_width;
+        self.height = out_height;
+        self.pixels = pixels;
+        self.dirty = Some(PixelRegion {
+            x: 0,
+            y: 0,
+            width: out_width,
+            height: out_height,
+        });
+        self.revision = self.revision.wrapping_add(1);
+    }
+
     pub fn clear(&mut self) {
         self.pixels.fill(Color32::TRANSPARENT);
         self.mark_dirty(PixelRegion {

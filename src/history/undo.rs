@@ -83,6 +83,11 @@ pub enum Change {
         region: PixelRegion,
         target_before: Vec<Color32>,
     },
+    /// The whole document was flipped or rotated.
+    ///
+    /// No pixels are stored: every transform is a lossless permutation, so the
+    /// opposite transform restores the document exactly and undo costs nothing.
+    Transformed { transform: crate::engine::Transform },
 }
 
 impl Change {
@@ -95,7 +100,7 @@ impl Change {
             Self::Inserted { entries, .. }
             | Self::Removed { entries, .. }
             | Self::Flattened { entries, .. } => entries.iter().map(Entry::memory_bytes).sum(),
-            Self::Moved { .. } => 0,
+            Self::Moved { .. } | Self::Transformed { .. } => 0,
             // Only what is actually retained is counted: while an edit is
             // undone, the layer belongs to the canvas and history holds no
             // copy of it.
@@ -219,6 +224,14 @@ impl Edit {
         }
     }
 
+    /// A flip or rotation of the whole document.
+    pub fn transformed(transform: crate::engine::Transform) -> Self {
+        Self {
+            label: transform.undo_label(),
+            change: Change::Transformed { transform },
+        }
+    }
+
     pub fn label(&self) -> &'static str {
         self.label
     }
@@ -296,6 +309,13 @@ impl Edit {
                 } else if canvas.layer_move_into(start, dest, group).is_none() {
                     canvas.layer_move(start, dest);
                 }
+            }
+            Change::Transformed { transform } => {
+                canvas.transform(if undo {
+                    transform.inverse()
+                } else {
+                    *transform
+                });
             }
             Change::Flattened { entries, active } => {
                 if undo {

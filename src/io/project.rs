@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::egui::Color32;
 use crate::engine::{Background, Canvas, PixelRegion, Surface};
-use crate::layers::{BlendMode, Entry, Group, GroupProps, Layer, LayerProps};
+use crate::layers::{Adjustment, BlendMode, Entry, Group, GroupProps, Layer, LayerProps};
 
 use super::straight_rgba;
 
@@ -68,8 +68,63 @@ struct LayerDto {
     /// field and load unclipped.
     #[serde(default)]
     clip_to_below: bool,
+    /// Live colour adjustments. Older projects have no such field and load
+    /// neutral (no adjustment).
+    #[serde(default)]
+    adjust: AdjustmentDto,
     /// Length of this layer's PNG stream, in bytes.
     image: u32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy)]
+struct AdjustmentDto {
+    #[serde(default)]
+    brightness: f32,
+    #[serde(default)]
+    contrast: f32,
+    #[serde(default = "neutral_saturation")]
+    saturation: f32,
+    #[serde(default)]
+    hue: f32,
+}
+
+fn neutral_saturation() -> f32 {
+    1.0
+}
+
+impl Default for AdjustmentDto {
+    fn default() -> Self {
+        Self {
+            brightness: 0.0,
+            contrast: 0.0,
+            saturation: 1.0,
+            hue: 0.0,
+        }
+    }
+}
+
+impl From<Adjustment> for AdjustmentDto {
+    fn from(adjust: Adjustment) -> Self {
+        let adjust = adjust.sanitised();
+        Self {
+            brightness: adjust.brightness,
+            contrast: adjust.contrast,
+            saturation: adjust.saturation,
+            hue: adjust.hue,
+        }
+    }
+}
+
+impl From<AdjustmentDto> for Adjustment {
+    fn from(dto: AdjustmentDto) -> Self {
+        Adjustment {
+            brightness: dto.brightness,
+            contrast: dto.contrast,
+            saturation: dto.saturation,
+            hue: dto.hue,
+        }
+        .sanitised()
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -141,6 +196,7 @@ pub fn save_project(path: &Path, canvas: &Canvas) -> Result<(), String> {
                     group: layer.group(),
                     alpha_locked: layer.alpha_locked(),
                     clip_to_below: layer.clip_to_below(),
+                    adjust: layer.adjustment().into(),
                     image: png.len() as u32,
                 }));
                 images.push(png);
@@ -280,6 +336,7 @@ pub fn load_project(path: &Path) -> Result<Canvas, String> {
                     blend: parse_blend(&layer.blend),
                     alpha_locked: layer.alpha_locked,
                     clip_to_below: layer.clip_to_below,
+                    adjust: layer.adjust.into(),
                 });
                 created.set_group(layer.group);
                 entries.push(Entry::Layer(created));

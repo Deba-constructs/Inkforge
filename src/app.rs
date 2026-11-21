@@ -15,7 +15,7 @@ use crate::engine::{
 };
 use crate::history::{Edit, History, Recorder};
 use crate::io::{self, recent, recovery, ImageFormat, RecoveryInfo};
-use crate::layers::{BlendMode, Entry, GroupProps, LayerId, LayerProps};
+use crate::layers::{Adjustment, BlendMode, Entry, GroupProps, LayerId, LayerProps};
 use crate::ui;
 
 /// The painting tools in the left rail.
@@ -1365,6 +1365,41 @@ impl InkforgeApp {
         self.update_layer_props(id, "clip to layer below", |props| {
             props.clip_to_below = clip
         });
+    }
+
+    /// Set the live colour adjustment of one layer.
+    ///
+    /// The adjustment is applied when the layer is composited and never touches
+    /// its pixels, so it undoes in one step and can be dragged back to neutral
+    /// without losing any paint.
+    pub fn set_layer_adjustment(&mut self, id: LayerId, adjust: Adjustment) {
+        self.update_layer_props(id, "layer adjustment", |props| props.adjust = adjust);
+    }
+
+    /// Flip or rotate the whole document, as one undo step.
+    ///
+    /// The layers are permuted in place (nothing is resampled), so undo applies
+    /// the opposite transform instead of keeping a copy of the canvas, and a
+    /// quarter turn swaps the document's width and height.
+    pub fn transform_document(&mut self, transform: crate::engine::Transform) {
+        self.end_stroke();
+        let before = (self.canvas.width(), self.canvas.height());
+
+        self.canvas.transform(transform);
+        self.history.push(Edit::transformed(transform));
+
+        let after = (self.canvas.width(), self.canvas.height());
+        if before != after {
+            // The page changed shape, so the old zoom no longer frames it.
+            self.view.request_fit();
+        }
+
+        self.set_status(format!(
+            "{} — {} × {}",
+            transform.label(),
+            after.0,
+            after.1
+        ));
     }
 
     pub fn set_group_visibility(&mut self, id: LayerId, visible: bool) {

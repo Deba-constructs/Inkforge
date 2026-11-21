@@ -11,8 +11,11 @@ What it does
 ------------
 
 * Freehand brush and eraser with size, opacity, hardness, spacing, grain and
-  speed-adaptive stroke smoothing, plus six built-in brush presets (Round, Ink
-  Pen, Pencil, Airbrush, Marker, Charcoal).
+  speed-adaptive stroke smoothing, plus 43 built-in brush presets in six
+  shelves: General, Inking (G-Pen, Technical Pen, Fineliner, Calligraphy),
+  Sketching (pencils, charcoal, chalk, pastel, crayon, marker), Painting
+  (bristle, filbert, palette knife, impasto, airbrush), Watercolour and Effects
+  (spray, splatter, stipple, smoke). The preset list scrolls in its own shelf.
 * Drawing-tablet pen pressure and tilt: pressure sets how wide and how solid
   each dab is and tilt fans the tip out, with the three amounts in the Drawing
   tablet panel. A mouse, or a pen lifted off the tablet, paints at full
@@ -23,6 +26,13 @@ What it does
 * Lock transparent pixels on a layer: paint then only recolours the pixels that
   are already there, so a line drawing can be coloured without spilling. The
   eraser also does nothing on a locked layer, because its alpha is frozen.
+* Colour adjustment on any layer: brightness, contrast, saturation and hue
+  sliders, with a Reset button. They change how the layer is composited, never
+  its pixels, so dragging them back to neutral restores the original exactly;
+  the values are saved in the project.
+* Flip the whole document horizontally or vertically, or rotate it 90° either
+  way or 180°, from the Image menu. Every layer turns with it, nothing is
+  resampled, and undo puts it back the way it was.
 * Clip a layer to the one below it (alpha inheritance): the layer keeps its
   colours, opacity and blend mode but can only show where the layer underneath
   has paint, so a multiply shadow stays inside the flat colour it belongs to.

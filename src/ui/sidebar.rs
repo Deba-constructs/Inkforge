@@ -9,9 +9,10 @@ use super::icons::{self, Icon};
 use super::{theme, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_WIDTH};
 use crate::app::{InkforgeApp, Tool};
 use crate::engine::{
-    presets::PRESETS, Background, SelectionMode, ShapeKind, MAX_FEATHER, MAX_GROW,
+    presets::{BrushGroup, PRESETS},
+    Background, SelectionMode, ShapeKind, MAX_FEATHER, MAX_GROW,
 };
-use crate::layers::{BlendMode, Entry, LayerId};
+use crate::layers::{Adjustment, BlendMode, Entry, LayerId};
 
 /// Quick-pick palette shown under the colour picker.
 const SWATCHES: [Color32; 8] = [
@@ -266,35 +267,56 @@ fn presets_section(app: &mut InkforgeApp, ui: &mut egui::Ui) {
     section_header(ui, "Presets");
 
     let active = app.brush.matching_preset();
-    for (index, preset) in PRESETS.iter().enumerate() {
-        let selected = active == Some(index);
-        let text = RichText::new(preset.name)
-            .size(12.0)
-            .color(if selected { theme::ACCENT } else { theme::TEXT });
+    // The library has forty brushes now, so it scrolls inside a fixed-height
+    // shelf instead of pushing the layer panel off the bottom of the sidebar.
+    egui::ScrollArea::vertical()
+        .id_salt("brush-presets")
+        .max_height(230.0)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 3.0;
+            for group in BrushGroup::ALL {
+                ui.label(
+                    RichText::new(group.label())
+                        .size(10.5)
+                        .color(theme::TEXT_MUTED),
+                );
+                for (index, preset) in PRESETS
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, preset)| preset.group == group)
+                {
+                    let selected = active == Some(index);
+                    let text = RichText::new(preset.name)
+                        .size(11.5)
+                        .color(if selected { theme::ACCENT } else { theme::TEXT });
 
-        let button = egui::Button::new(text)
-            .min_size(Vec2::new(ui.available_width(), 26.0))
-            .fill(if selected {
-                theme::with_alpha(theme::ACCENT, 28)
-            } else {
-                theme::INPUT
-            })
-            .stroke(Stroke::new(
-                1.0,
-                if selected {
-                    theme::with_alpha(theme::ACCENT, 150)
-                } else {
-                    theme::LINE_SOFT
-                },
-            ));
+                    let button = egui::Button::new(text)
+                        .min_size(Vec2::new(ui.available_width(), 22.0))
+                        .fill(if selected {
+                            theme::with_alpha(theme::ACCENT, 28)
+                        } else {
+                            theme::INPUT
+                        })
+                        .stroke(Stroke::new(
+                            1.0,
+                            if selected {
+                                theme::with_alpha(theme::ACCENT, 150)
+                            } else {
+                                theme::LINE_SOFT
+                            },
+                        ));
 
-        let response = ui.add(button);
-        if response.clicked() {
-            app.brush.apply_preset(preset);
-            app.set_status(format!("Brush preset: {}", preset.name));
-        }
-        response.on_hover_text(preset.hint);
-    }
+                    let response = ui.add(button);
+                    if response.clicked() {
+                        app.brush.apply_preset(preset);
+                        app.set_status(format!("Brush preset: {}", preset.name));
+                    }
+                    response.on_hover_text(preset.hint);
+                }
+                ui.add_space(3.0);
+            }
+        });
 }
 
 fn slider_row(ui: &mut egui::Ui, label: &str, value: &str) {
@@ -1211,6 +1233,60 @@ fn layer_properties(app: &mut InkforgeApp, ui: &mut egui::Ui) {
         .changed()
     {
         app.set_layer_clip(id, clipped);
+    }
+
+    ui.add_space(6.0);
+    adjustment_controls(app, ui, id, props.adjust);
+}
+
+/// Live colour adjustment sliders for the active layer.
+///
+/// These are non-destructive: the sliders change how the layer is composited,
+/// not its pixels, so dragging them back to neutral restores the original
+/// artwork exactly. The whole group undoes as one step per drag.
+fn adjustment_controls(app: &mut InkforgeApp, ui: &mut egui::Ui, id: LayerId, current: Adjustment) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Colour adjustment").size(11.5).color(theme::TEXT_MUTED));
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let adjusted = !current.is_identity();
+            if ui
+                .add_enabled(adjusted, egui::Button::new(RichText::new("Reset").size(11.0)))
+                .clicked()
+            {
+                app.set_layer_adjustment(id, Adjustment::default());
+            }
+        });
+    });
+
+    let mut adjust = current;
+    let mut changed = false;
+
+    slider_row(ui, "Brightness", &format!("{:+.0}", adjust.brightness * 100.0));
+    changed |= ui
+        .add(Slider::new(&mut adjust.brightness, -1.0..=1.0).show_value(false))
+        .on_hover_text("Lifts or darkens the whole layer without touching its pixels")
+        .changed();
+
+    slider_row(ui, "Contrast", &format!("{:+.0}", adjust.contrast * 100.0));
+    changed |= ui
+        .add(Slider::new(&mut adjust.contrast, -1.0..=1.0).show_value(false))
+        .on_hover_text("Pushes tones away from mid-grey (positive) or towards it (negative)")
+        .changed();
+
+    slider_row(ui, "Saturation", &format!("{:.0}%", adjust.saturation * 100.0));
+    changed |= ui
+        .add(Slider::new(&mut adjust.saturation, 0.0..=2.0).show_value(false))
+        .on_hover_text("0% is fully grey, 100% is unchanged, 200% doubles the colour")
+        .changed();
+
+    slider_row(ui, "Hue", &format!("{:+.0}°", adjust.hue));
+    changed |= ui
+        .add(Slider::new(&mut adjust.hue, -180.0..=180.0).show_value(false))
+        .on_hover_text("Turns every colour on the layer around the colour wheel")
+        .changed();
+
+    if changed {
+        app.set_layer_adjustment(id, adjust);
     }
 }
 

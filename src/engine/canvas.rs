@@ -12,7 +12,7 @@ use crate::layers::{
 
 use super::{
     fill::flood_mask, segment_bounds, shape::path_bounds, BrushDab, PixelRegion, Selection,
-    ShapeKind, Surface,
+    ShapeKind, Surface, Transform,
 };
 
 /// Recolour a pixel without changing its alpha, for a layer with locked
@@ -535,6 +535,23 @@ impl Canvas {
     /// children, a layer is one row).
     pub fn block_len(&self, index: usize) -> usize {
         self.stack.block_len(index)
+    }
+
+    /// Flip or rotate the whole document.
+    ///
+    /// Every layer is permuted in place, so the transform is lossless and the
+    /// inverse restores the document exactly. A quarter turn swaps the canvas
+    /// width and height.
+    ///
+    /// Any selection is cleared: it is described in the old pixel coordinates
+    /// and silently keeping it would select the wrong area of the turned
+    /// artwork.
+    pub fn transform(&mut self, transform: Transform) {
+        self.stack.transform(transform);
+        self.width = self.stack.width();
+        self.height = self.stack.height();
+        self.selection = None;
+        self.modified = true;
     }
 
     /// Mark part (or all) of the composite for recomputing.

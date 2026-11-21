@@ -8,8 +8,20 @@ fn ink_mass(surface: &Surface) -> u64 {
     surface.pixels().iter().map(|pixel| pixel.a() as u64).sum()
 }
 
-/// Paint the same stroke with a preset and return (ink mass, covered pixels).
-fn paint_with_preset(index: usize) -> (u64, usize) {
+/// A cheap hash of every alpha value, so two strokes that lay down the same
+/// amount of ink in a different shape still count as different marks.
+fn alpha_hash(surface: &Surface) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for pixel in surface.pixels() {
+        hash ^= pixel.a() as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+/// Paint the same stroke with a preset and return
+/// (ink mass, covered pixels, shape hash).
+fn paint_with_preset(index: usize) -> (u64, usize, u64) {
     let mut brush = BrushSettings::default();
     brush.apply_preset(&PRESETS[index]);
     let dab = brush.dab(Color32::BLACK, false);
@@ -18,7 +30,15 @@ fn paint_with_preset(index: usize) -> (u64, usize) {
     surface.paint_segment(pos2(40.0, 128.0), pos2(216.0, 128.0), &dab);
 
     let covered = surface.pixels().iter().filter(|pixel| pixel.a() > 0).count();
-    (ink_mass(&surface), covered)
+    (ink_mass(&surface), covered, alpha_hash(&surface))
+}
+
+/// Index of a preset by name, so the library can be reordered freely.
+fn index_of(name: &str) -> usize {
+    PRESETS
+        .iter()
+        .position(|preset| preset.name == name)
+        .unwrap_or_else(|| panic!("no preset named {name}"))
 }
 
 #[test]
@@ -52,7 +72,7 @@ fn changing_a_setting_leaves_the_preset() {
 
 #[test]
 fn presets_produce_distinct_marks() {
-    let signatures: Vec<(u64, usize)> = (0..PRESETS.len()).map(paint_with_preset).collect();
+    let signatures: Vec<(u64, usize, u64)> = (0..PRESETS.len()).map(paint_with_preset).collect();
 
     for left in 0..signatures.len() {
         for right in left + 1..signatures.len() {
@@ -67,8 +87,8 @@ fn presets_produce_distinct_marks() {
 
     // The requirement is that presets feel different, not merely that the
     // numbers differ: the airbrush must cover far more of the canvas than the pen.
-    let (_, pen_coverage) = signatures[1];
-    let (_, airbrush_coverage) = signatures[3];
+    let (_, pen_coverage, _) = signatures[index_of("Ink Pen")];
+    let (_, airbrush_coverage, _) = signatures[index_of("Airbrush")];
     assert!(
         airbrush_coverage > pen_coverage * 3,
         "airbrush covered {airbrush_coverage} px, pen covered {pen_coverage} px"

@@ -567,12 +567,15 @@ impl LayerStack {
             let target_surface = self.surface_mut(target)?;
             target_before = target_surface.copy_region(region);
             let mut merged = target_before.clone();
+            let adjust = source.adjustment();
+            let adjusted = !adjust.is_identity();
             for row in 0..region.height {
                 for col in 0..region.width {
                     let src = source.surface().pixel(region.x + col, region.y + row);
                     if src.a() == 0 {
                         continue;
                     }
+                    let src = if adjusted { adjust.apply(src) } else { src };
                     let slot = row as usize * region.width as usize + col as usize;
                     merged[slot] =
                         composite_pixel(merged[slot], src, source.blend(), source.opacity());
@@ -772,6 +775,24 @@ impl LayerStack {
         self.composite.write_region(region, &buffer);
     }
 
+    /// Flip or rotate every layer surface and resize the stack to match.
+    ///
+    /// Groups carry no pixels of their own, so they need no work; their
+    /// children are transformed individually and keep their membership.
+    pub fn transform(&mut self, transform: crate::engine::Transform) {
+        for entry in &mut self.entries {
+            if let Entry::Layer(layer) = entry {
+                layer.surface_mut().transform(transform);
+            }
+        }
+
+        let (width, height) = transform.output_size(self.width, self.height);
+        self.width = width;
+        self.height = height;
+        self.composite = Surface::new(width, height);
+        self.invalidate_all();
+    }
+
     /// Bytes used by all layer surfaces plus the composite.
     pub fn memory_bytes(&self) -> usize {
         let bytes_per_surface = self.width as usize * self.height as usize * 4;
@@ -793,6 +814,8 @@ fn composite_entry(
     let opacity = layer.opacity() * inherited_opacity;
     let mode = layer.blend();
     let surface = layer.surface();
+    let adjust = layer.adjustment();
+    let adjusted = !adjust.is_identity();
 
     for row in 0..region.height {
         let y = region.y + row;
@@ -802,6 +825,7 @@ fn composite_entry(
             if src.a() == 0 {
                 continue;
             }
+            let src = if adjusted { adjust.apply(src) } else { src };
             let index = row as usize * region.width as usize + col as usize;
             buffer[index] = composite_pixel(buffer[index], src, mode, opacity);
         }
@@ -860,6 +884,8 @@ fn composite_entry_masked(
     let opacity = layer.opacity() * inherited_opacity;
     let mode = layer.blend();
     let surface = layer.surface();
+    let adjust = layer.adjustment();
+    let adjusted = !adjust.is_identity();
 
     for row in 0..region.height {
         let y = region.y + row;
@@ -873,6 +899,7 @@ fn composite_entry_masked(
             if mask <= 0.0 {
                 continue;
             }
+            let src = if adjusted { adjust.apply(src) } else { src };
             let index = row as usize * region.width as usize + col as usize;
             buffer[index] = composite_pixel_masked(buffer[index], src, mode, opacity, mask);
         }

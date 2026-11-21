@@ -3,9 +3,11 @@
 Living document: environment notes, milestone status, architecture decisions,
 verification log and outstanding work. Updated as milestones land.
 
-Last updated: Milestone 8 — the 1.0.0 Windows executable and portable ZIP were
-built, and the executable now carries its INKFORGE icon and version resource
-(Milestone 7 is still open; see §7).
+Last updated: Milestone 8 — the 1.2.0 Windows executable and portable ZIP were
+built, carrying its INKFORGE icon and version resource. Milestone 7 is still
+open (see §7); 1.1.0 added the full W3C blend set and clip to layer below, and
+1.2.0 adds a 43-brush library, live per-layer colour adjustments and
+document flips/rotations.
 
 ---
 
@@ -20,12 +22,12 @@ build):
 | Rust | rustc 1.100.0 (2026-11-09), cargo 1.100.0, installed with rustup (minimal profile) |
 | Crates.io access | Working; `eframe 0.37.0` and its dependency tree resolve and build |
 | Graphics stack available here | No X11/Wayland display and no `sudo` for dev packages, so the window can be compiled but **not launched** in this environment |
-| Windows build | No Windows host and no MSVC linker; the 1.0.0 executable was **cross-compiled on Linux** with `cargo zigbuild` (zig 0.13's bundled MinGW toolchain) for `x86_64-pc-windows-gnu` — see §6 |
+| Windows build | No Windows host and no MSVC linker; the 1.2.0 executable was **cross-compiled on Linux** with `cargo zigbuild` (zig 0.13's bundled MinGW toolchain) for `x86_64-pc-windows-gnu` — see §6 |
 | GUI toolkit | `eframe 0.37` (default renderer family: wgpu) with `egui 0.37` |
 
 **Consequence, stated plainly:** the project targets Windows and builds with
 `x86_64-pc-windows-msvc` on a Windows machine. This container has no Windows and
-no MSVC linker, so the 1.0.0 release was cross-compiled to
+no MSVC linker, so the 1.2.0 release was cross-compiled to
 `x86_64-pc-windows-gnu` with `cargo zigbuild` instead: a real 64-bit Windows GUI
 executable was produced and inspected (§5, §6), but it has **never been run**,
 because nothing here can execute a Windows binary. The clean-machine and artist
@@ -37,12 +39,12 @@ run (the rest of Milestone 8) still has to happen on Windows.
 | --- | --- | --- |
 | 1 | Project init, Rust config, desktop window, main UI | **Done** (compiles clean; window not launched — no display here) |
 | 2 | Interactive canvas, freehand drawing, brush size/colour, eraser | **Done** (compiles clean; painting verified by tests and a simulated pointer drag, not yet by eye) |
-| 3 | Brush presets, stroke smoothing, opacity, better painting engine | **Done** (presets differ in edge softness, spacing, grain and flow; the stabiliser adapts to pointer speed) |
-| 4 | Layer architecture and layer manager | **Done** (add/delete/reorder/rename, visibility, opacity, 17 blend modes, clip to layer below, layer-aware undo; verified by tests, not by eye) |
+| 3 | Brush presets, stroke smoothing, opacity, better painting engine | **Done** (43 presets in six shelves that differ in size, edge softness, opacity, spacing, grain and smoothing; the stabiliser adapts to pointer speed) |
+| 4 | Layer architecture and layer manager | **Done** (add/delete/reorder/rename, visibility, opacity, 17 blend modes, clip to layer below, live brightness/contrast/saturation/hue per layer, layer-aware undo; verified by tests, not by eye) |
 | 5 | Undo/redo, selection, fill, shapes | **Done** (undo/redo landed early; rectangle selection, flood fill and line/rectangle/ellipse shapes added) |
 | 6 | PNG/JPEG import-export, native `.inkforge`, reliable save/load | **Done** (projects round-trip every layer, group and property; corrupt files are refused with a message; verified by tests, not by hand in the GUI) |
 | 7 | Interface refinement, performance, testing | **In progress** — live window title, recent projects, partial GPU uploads, threaded stamping and the composite tile pyramid landed; see §7 |
-| 8 | Windows release build, portable exe, ZIP, artist testing | **In progress** — 1.0.0 executable, portable folder and ZIP built and inspected; the icon and version resource are embedded and were read back out of the PE; running it on Windows and artist testing remain |
+| 8 | Windows release build, portable exe, ZIP, artist testing | **In progress** — 1.2.0 executable, portable folder and ZIP built and inspected; the icon and version resource are embedded and were read back out of the PE; running it on Windows and artist testing remain |
 
 ## 3. What is implemented so far
 
@@ -145,7 +147,7 @@ Real, working behaviour (not painted mock-ups):
 
 ### Milestone 3 — presets and stabilisation
 
-* **Presets** (`engine/presets.rs`) — six tips that differ in ways the artist can
+* **Presets** (`engine/presets.rs`) — 43 tips that differ in ways the artist can
   see, not just in the numbers: Round, Ink Pen (thin, hard), Pencil (fine and
   grainy), Airbrush (90 px, soft, 15% flow), Marker (flat, 55% flow, stacks) and
   Charcoal (grainy, 30%-of-diameter spacing).
@@ -639,7 +641,7 @@ canvas rotation, pen pressure.
 | Check | Command | Result |
 | --- | --- | --- |
 | Type/compile check, all targets | `cargo check --all-targets` | Passes, 0 errors, 0 warnings |
-| Tests | `cargo test` | Passes — 235 tests, 0 failures (exit 0): 7 model/viewport/brush, 7 painting, 39 layers/groups, 7 layer alpha lock, 16 blend modes, 9 clipping, 8 history, 7 presets, 6 stabiliser, 50 selection/fill/shapes, 16 headless UI, 9 file I/O, 7 autosave/recovery, 7 recent projects, 11 tile pyramid, 7 surface and stamping performance, 1 pool dispatch, 9 pen pressure/tilt, 2 Win32 pointer layouts, 10 canvas rotation |
+| Tests | `cargo test` | Passes — 258 tests, 0 failures (exit 0): 9 model/viewport/brush/transform, 7 painting, 39 layers/groups, 7 layer alpha lock, 16 blend modes, 9 clipping, 16 colour adjustments, 8 history, 7 presets, 6 stabiliser, 50 selection/fill/shapes, 16 headless UI, 9 file I/O, 7 autosave/recovery, 7 recent projects, 11 tile pyramid, 7 surface and stamping performance, 1 pool dispatch, 9 pen pressure/tilt, 2 Win32 pointer layouts, 10 canvas rotation, 8 document transforms |
 | Canvas rotation | `cargo test --test view_rotation` | A fresh view is upright; a quarter turn sends the page corners where they look like they go; screen and canvas stay exact inverses at eight angles with zoom and pan applied; cursor-anchored zoom on a turned view does not drift; angles accumulate and wrap into (-180°, 180°]; 1.5° near a quarter turn snaps onto it while a deliberate 0.5 rad is left alone; reset and NaN/infinite input behave; a turned landscape page fits into the window height (0.528 at 1000 × 600) instead of the width; the page rectangle itself is not turned. The turned *rendering* has not been looked at — no display here (§8) |
 | Pen pressure and tilt | `cargo test --test pen` and `cargo test --lib pointer` | A mouse leaves the brush exactly as configured; half pressure paints fainter *and* narrower (a dab's footprint stops short of where full pressure reaches); a feather touch still leaves a line above `MIN_DAB_RADIUS`; 60° of tilt widens a 20 px tip to 26 px without changing opacity, and never pushes the brush past `MAX_SIZE`; 0% amounts and the off switch ignore the pen entirely; a NaN/infinite reading falls back to full pressure; a real stroke driven through `begin_stroke`/`extend_stroke` covers 18 px above its path at full pressure but not at 25%; and the Win32 `POINTER_INFO` / `POINTER_PEN_INFO` sizes and field offsets match the 64-bit SDK. The tablet path itself has **not** run — no pen and no Windows here (§8) |
 | Start state | `cargo test --test ui_smoke` | An untouched canvas paints the "Start painting" card, a simulated drag removes it, and undoing the only stroke brings it back (proving the cached empty check follows the composite revision) |
@@ -651,7 +653,9 @@ canvas rotation, pen pressure.
 | Stamping speed | `cargo test --release --test performance -- --nocapture` | 600 px dab: 5.9 ms single-threaded, 2.8 ms on four workers, 1.8 ms on eight; 300 px dab: 2.8 ms, 1.0 ms, 0.84 ms (8-core container, release build) |
 | Pan and zoom cost (large document) | `cargo test --release --test tiles panning_and_zooming -- --nocapture` | On 8192 × 8192: panning 7 200 canvas px at 50% costs 0.65–0.68 ms mean / 4–8 ms worst per frame with 125 of 150 frames uploading nothing (9 µs each); zooming 100% → 5% over 60 frames costs 0.45 ms mean / 9.1 ms worst; settled frames at any fixed zoom draw in 3–10 µs; the first frame at a previously unseen level costs 11–110 ms |
 | Partial uploads (headless) | `cargo test --test ui_smoke painting_uploads_only_the_changed_region` | A simulated drag uploads 13 700 of 2 073 600 pixels (0.66% of a 1920 × 1080 canvas) and the uploaded region is marked clean |
-| Presets | `cargo test --test presets` | Defaults match preset 0, every preset round-trips through its settings, all six paint measurably distinct marks, spacing changes density, grain varies alpha reproducibly, a clean tip has a uniform core |
+| Presets | `cargo test --test presets` | Defaults match preset 0, all 43 presets round-trip through their settings, every pair paints a measurably distinct mark (ink mass, coverage and a hash of the alpha shape all have to differ, 903 pairs), names and parameter sets are unique, every shelf is populated, spacing changes density, grain varies alpha reproducibly, a clean tip has a uniform core |
+| Colour adjustments | `cargo test --test adjustments` | A neutral adjustment returns pixels untouched; brightness lifts and darkens by the expected amounts; positive contrast pushes a light tone up and full negative contrast flattens to mid-grey; saturation 0 turns red into its Rec. 601 grey and 200% pushes channels apart; hue +120° turns red into green and +240° into blue while grey is left alone; alpha survives; wild and NaN values are clamped; the composite applies the adjustment; resetting restores the exact original composite and leaves the layer's own pixels untouched; a clipped layer keeps its own adjustment; merging down bakes it; one undo returns the layer to neutral and redo restores it; the values survive save/load, and a project written before adjustments existed loads neutral |
+| Document transforms | `cargo test --test transform` | Flip horizontal and vertical map every pixel to its mirror; a quarter turn swaps the document size and the old left column becomes the new top row; every transform is a permutation (each source pixel read exactly once, none left out) and its inverse restores the exact pixels and size; two clockwise turns equal a half turn; clockwise and counter-clockwise cover the same source pixels; a transform clears the selection; every layer of the stack turns with the canvas; rotate → undo → redo through the app restores pixels and size; a turned document saves and reloads with the new dimensions and the same pixels |
 | Stabiliser | `cargo test --test stabilizer` | 0% is exact, shaky paths are flattened, lag never exceeds the 26 px limit, light smoothing follows closely, a held pointer converges, non-finite input is ignored |
 | Undo/redo | `cargo test --test history` | Stroke undo/redo round trip, undo restoring only the painted area, undoing an erase, redo invalidation, empty edits not recorded, 256 MB-style trimming keeping the newest edit, no-op undo on empty history, a stroke staying on its own layer |
 | Layers and groups | `cargo test --test layers` | Default single layer, add-above-and-select, last-layer protection, reorder changing what composites on top, hide/show, 50% opacity maths, multiply blending, dirty-region composite caching, undoable add/delete, painting landing on the selected layer, duplicate copying pixels and properties, merge down baking both sides as one undo step, merge undo restoring the removed layer and target pixels, merge redo re-applying the pixels, the merge snapshot staying proportional to the merged layer rather than the canvas, undo moving a merged layer rather than copying it, the bottom layer refusing to merge, thumbnails keeping the canvas aspect, flatten baking the visible stack (and its undo/redo), flatten history not retaining a third canvas image, hidden layers being discarded but restored by undo, drag-to-reorder slot maths and a no-op drag adding no history, grouping a layer (and refusal to nest), group visibility and opacity reaching every child, adding a layer into the selected group, deleting a group as one undo step, painting refused while a group is selected, collapse being view-only, slots mapping to the group whose block holds them, dragging a top-level layer into a group (one undo step, undone back to the top level) and dragging a layer out of a group (undo and redo changing its group back and forth) |
@@ -666,9 +670,9 @@ canvas rotation, pen pressure.
 | Pointer painting (headless) | `cargo test --test ui_smoke` | A simulated press → move → release over the canvas paints real pixels, marks the document modified and ends the stroke |
 | Undo shortcuts (headless) | `cargo test --test ui_smoke` | After a simulated stroke, a synthetic `Ctrl+Z` removes all paint, the redo stack fills, and `Ctrl+Y` restores the stroke — driven through `InkforgeApp::frame`, the same code path the window uses |
 | Application launch | `cargo run` | **Not possible here** (headless Linux container, no display server) |
-| Windows release build | `cargo zigbuild --release --target x86_64-pc-windows-gnu` | **Passes** (1.0.0, exit 0, 1m 36s cold): a GUI-subsystem PE32+ x86-64 executable, 12.8 MB, imports only DLLs that ship with Windows 10/11 (`kernel32`, `user32`, `gdi32`, `ole32`, `dxgi`, `dwmapi`, `uxtheme`, `bcryptprimitives`, `api-ms-win-crt-*`) — no VCRUNTIME, MSVCP or libgcc/libstdc++ DLL. The only warning is zig's own libunwind `dllexport` redeclaration, from the toolchain |
-| Portable ZIP | `scripts/package-windows-cross.sh` | **Passes**: `dist/INKFORGE-1.0.0-windows-x86_64/` holds `INKFORGE.exe`, `README.txt` and `LICENSE-MIT.txt`; the ZIP is 5.6 MB and unpacks to exactly those three files |
-| Icon and version metadata in the PE | pefile over `target/x86_64-pc-windows-gnu/release/inkforge.exe` | **Passes, as a file read**: the resource directory holds seven `RT_ICON` images (1 128–33 066 bytes: the 16/24/32/48/64 px bitmaps and the 128/256 px PNGs), one `RT_GROUP_ICON`, and an `RT_VERSION` block whose `VS_FIXEDFILEINFO` has signature `0xFEEF04BD`, file and product version `1.0.0.0`, `VOS_NT_WINDOWS32` and `VFT_APP`; all eight string fields are present (`ProductName` INKFORGE, `FileDescription` "INKFORGE - a digital painting application for artists", `CompanyName`, `FileVersion` 1.0.0, `InternalName`, `LegalCopyright`, `OriginalFilename` INKFORGE.exe, `ProductVersion`). Explorer and Task Manager were **not** opened to look at it (§8) |
+| Windows release build | `cargo zigbuild --release --target x86_64-pc-windows-gnu` | **Passes** (1.2.0, exit 0, 27 s warm): a GUI-subsystem PE32+ x86-64 executable, 12.3 MB, imports only DLLs that ship with Windows 10/11 (`kernel32`, `user32`, `gdi32`, `ole32`, `dxgi`, `dwmapi`, `uxtheme`, `bcryptprimitives`, `api-ms-win-crt-*`) — no VCRUNTIME, MSVCP or libgcc/libstdc++ DLL. The only warning is zig's own libunwind `dllexport` redeclaration, from the toolchain |
+| Portable ZIP | `scripts/package-windows-cross.sh` | **Passes**: `dist/INKFORGE-1.2.0-windows-x86_64/` holds `INKFORGE.exe`, `README.txt` and `LICENSE-MIT.txt`; the ZIP is 5.4 MB and unpacks to exactly those three files |
+| Icon and version metadata in the PE | pefile over `target/x86_64-pc-windows-gnu/release/inkforge.exe` | **Passes, as a file read**: the resource directory holds seven `RT_ICON` images (1 128–33 066 bytes: the 16/24/32/48/64 px bitmaps and the 128/256 px PNGs), one `RT_GROUP_ICON`, and an `RT_VERSION` block whose `VS_FIXEDFILEINFO` has signature `0xFEEF04BD`, file and product version `1.2.0.0`, `VOS_NT_WINDOWS32` and `VFT_APP`; all eight string fields are present (`ProductName` INKFORGE, `FileDescription` "INKFORGE - a digital painting application for artists", `CompanyName`, `FileVersion` 1.2.0, `InternalName`, `LegalCopyright`, `OriginalFilename` INKFORGE.exe, `ProductVersion`). Explorer and Task Manager were **not** opened to look at it (§8) |
 | Running the release on Windows | double-click `INKFORGE.exe` | **Not possible here** (Linux, no Windows, no display); the executable has never been launched — see §8 |
 
 What is therefore verified: the code compiles cleanly against the real
@@ -695,6 +699,18 @@ stroke, and is undone and redone by Ctrl+Z / Ctrl+Y.
   Linux and macOS the brush behaves exactly as before (full pressure).
 * Undo history is capped at 256 MB and silently drops the oldest edits once
   full; there is no "history size" preference yet.
+* Flipping or rotating the document clears the selection instead of turning it
+  with the artwork, and undo does not bring the selection back. The artwork
+  itself is restored exactly.
+* Layer adjustments are applied when a layer is composited, so the eyedropper
+  and flood fill see the adjusted colours (they sample the visible image), while
+  merging down bakes them into the target. There is no mask, curves or levels
+  adjustment yet, and no document-wide adjustment layer.
+* The 43 brush presets are parameter sets the existing rasteriser understands:
+  size, hardness, opacity, spacing, grain and smoothing. There is still no
+  stamp-tip or dual-brush engine, so "bristle" and "watercolour" brushes are
+  shaped by spacing and grain rather than by a real hair or wet-media simulation.
+  None of them has been looked at on a screen (§8).
 * Undo covers pixel edits and layer structure/properties; selection changes in
   general, and Quick Mask painting in particular, are not in the history —
   background colour changes are document settings outside it too.
@@ -782,8 +798,8 @@ stroke, and is undone and redone by Ctrl+Z / Ctrl+Y.
   unverified until the app runs on a desktop.
 * No pen pressure/tilt; pointer position only.
 * No canvas rotation yet.
-* The 1.0.0 Windows package was cross-compiled on Linux and verified only as a
-  file: 64-bit, GUI subsystem, system-only imports, 12.8 MB. It has never been
+* The 1.2.0 Windows package was cross-compiled on Linux and verified only as a
+  file: 64-bit, GUI subsystem, system-only imports, 12.3 MB. It has never been
   executed, so its GPU initialisation, window creation, fonts and file dialogs
   on Windows are all unconfirmed — as is anything about how it looks at a given
   DPI. The first launch on a Windows machine is the real test (Milestone 8).
@@ -791,7 +807,7 @@ stroke, and is undone and redone by Ctrl+Z / Ctrl+Y.
   PE, not by looking at Windows: the `.ico` images and the `VERSIONINFO` strings
   are present and correct, but how Explorer, the task bar and Task Manager draw
   them at a given DPI, and whether the icon reads well at 16 px on a real
-  desktop, have not been seen. The About dialog shows the same 1.0.0 from the
+  desktop, have not been seen. The About dialog shows the same 1.2.0 from the
   compiled-in crate version.
 * The ZIP is unsigned. A downloaded copy will raise a SmartScreen warning on
   first run unless it is code-signed, which it is not.
@@ -865,7 +881,7 @@ The icon is drawn by `python3 scripts/make-icon.py`, which writes
 
 ### 6b. Cross-compiling the release from Linux
 
-This is how 1.0.0 was actually produced here, since the container has no
+This is how 1.2.0 was actually produced here, since the container has no
 Windows and no MSVC linker:
 
 ```bash

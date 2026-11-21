@@ -54,6 +54,7 @@ fn menus(app: &mut InkforgeApp, ui: &mut egui::Ui) {
     egui::MenuBar::new().ui(ui, |ui| {
         ui.menu_button("File", |ui| file_menu(app, ui));
         ui.menu_button("Edit", |ui| edit_menu(app, ui));
+        ui.menu_button("Image", |ui| image_menu(app, ui));
         ui.menu_button("View", |ui| view_menu(app, ui));
         ui.menu_button("Help", |ui| help_menu(app, ui));
     });
@@ -212,6 +213,27 @@ fn edit_menu(app: &mut InkforgeApp, ui: &mut egui::Ui) {
         app.set_status("View reset to fit");
         ui.close();
     }
+}
+
+/// Flips and rotations of the artwork itself (as opposed to the view).
+fn image_menu(app: &mut InkforgeApp, ui: &mut egui::Ui) {
+    for transform in crate::engine::Transform::ALL {
+        if ui.button(transform.label()).clicked() {
+            app.transform_document(transform);
+            ui.close();
+        }
+    }
+
+    ui.separator();
+    ui.label(
+        RichText::new(format!(
+            "Artwork: {} × {} px. These change the pixels, not the view.",
+            app.canvas.width(),
+            app.canvas.height()
+        ))
+        .size(11.0)
+        .color(theme::TEXT_MUTED),
+    );
 }
 
 /// Degrees one "Turn canvas" menu click rotates the view by.

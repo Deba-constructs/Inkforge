@@ -11,5 +11,5 @@ pub mod layer;
 pub mod stack;
 
 pub use group::{Group, GroupProps};
-pub use layer::{composite_pixel, BlendMode, Layer, LayerId, LayerProps};
+pub use layer::{composite_pixel, Adjustment, BlendMode, Layer, LayerId, LayerProps};
 pub use stack::{Entry, FlattenedStack, LayerStack, MergedLayer};

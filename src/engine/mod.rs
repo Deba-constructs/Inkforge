@@ -18,6 +18,7 @@ pub mod selection;
 pub mod shape;
 pub mod stabilizer;
 pub mod surface;
+pub mod transform;
 pub mod viewport;
 
 pub use brush::{
@@ -33,4 +34,5 @@ pub use renderer::ThumbnailCache;
 pub use selection::{Clip, Selection, SelectionMode, SoftSpan, MAX_FEATHER, MAX_GROW};
 pub use shape::{shape_path, ShapeKind};
 pub use surface::{segment_bounds, PixelRegion, Surface};
+pub use transform::Transform;
 pub use viewport::Viewport;

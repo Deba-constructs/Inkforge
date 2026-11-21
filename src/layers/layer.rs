@@ -262,6 +262,177 @@ fn set_saturation(color: [f32; 3], target: f32) -> [f32; 3] {
     out
 }
 
+/// Live colour adjustments applied to a layer as it is composited.
+///
+/// These are non-destructive: they never touch the layer's pixels, so dragging
+/// a slider back to zero restores the original artwork exactly, and the whole
+/// adjustment travels with the layer in the project file.
+///
+/// `brightness` and `contrast` are `-1.0..=1.0` (0 changes nothing), `saturation`
+/// is `0.0..=2.0` (1 changes nothing, 0 is fully grey) and `hue` is a rotation
+/// in degrees, `-180.0..=180.0`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Adjustment {
+    pub brightness: f32,
+    pub contrast: f32,
+    pub saturation: f32,
+    pub hue: f32,
+}
+
+impl Default for Adjustment {
+    fn default() -> Self {
+        Self {
+            brightness: 0.0,
+            contrast: 0.0,
+            saturation: 1.0,
+            hue: 0.0,
+        }
+    }
+}
+
+impl Adjustment {
+    /// True when the adjustment would not change a single pixel.
+    ///
+    /// The compositor uses this to skip the per-pixel work entirely, so an
+    /// unadjusted document renders exactly as fast as it did before
+    /// adjustments existed.
+    pub fn is_identity(&self) -> bool {
+        self.brightness.abs() < f32::EPSILON
+            && self.contrast.abs() < f32::EPSILON
+            && (self.saturation - 1.0).abs() < f32::EPSILON
+            && self.hue.abs() < f32::EPSILON
+    }
+
+    /// The same adjustment with every value inside its documented range, and
+    /// NaN replaced by the neutral value.
+    pub fn sanitised(self) -> Self {
+        let unit = |value: f32, neutral: f32| {
+            if value.is_finite() {
+                value.clamp(-1.0, 1.0)
+            } else {
+                neutral
+            }
+        };
+        let saturation = if self.saturation.is_finite() {
+            self.saturation.clamp(0.0, 2.0)
+        } else {
+            1.0
+        };
+        let hue = if self.hue.is_finite() {
+            // Keep the rotation meaningful outside one turn.
+            let turned = self.hue % 360.0;
+            if turned > 180.0 {
+                turned - 360.0
+            } else if turned < -180.0 {
+                turned + 360.0
+            } else {
+                turned
+            }
+        } else {
+            0.0
+        };
+        Self {
+            brightness: unit(self.brightness, 0.0),
+            contrast: unit(self.contrast, 0.0),
+            saturation,
+            hue,
+        }
+    }
+
+    /// Apply the adjustment to one premultiplied pixel, keeping its alpha.
+    pub fn apply(self, pixel: Color32) -> Color32 {
+        let adjustment = self.sanitised();
+        if adjustment.is_identity() {
+            return pixel;
+        }
+
+        let alpha = pixel.a() as f32 / 255.0;
+        if alpha <= 0.0 {
+            // Nothing visible to adjust, and no colour to recover.
+            return pixel;
+        }
+
+        let mut rgb = [
+            (pixel.r() as f32 / 255.0 / alpha).clamp(0.0, 1.0),
+            (pixel.g() as f32 / 255.0 / alpha).clamp(0.0, 1.0),
+            (pixel.b() as f32 / 255.0 / alpha).clamp(0.0, 1.0),
+        ];
+
+        if adjustment.hue != 0.0 {
+            rgb = rotate_hue(rgb, adjustment.hue);
+        }
+
+        if (adjustment.saturation - 1.0).abs() > f32::EPSILON {
+            let luma = luminance(rgb);
+            for channel in &mut rgb {
+                *channel = luma + (*channel - luma) * adjustment.saturation;
+            }
+        }
+
+        if adjustment.brightness != 0.0 {
+            for channel in &mut rgb {
+                *channel += adjustment.brightness;
+            }
+        }
+
+        if adjustment.contrast != 0.0 {
+            // Pivot around mid-grey so raising contrast darkens darks and
+            // lightens lights without shifting the whole image.
+            let factor = 1.0 + adjustment.contrast;
+            for channel in &mut rgb {
+                *channel = (*channel - 0.5) * factor + 0.5;
+            }
+        }
+
+        let premultiply = |channel: f32| (channel.clamp(0.0, 1.0) * alpha * 255.0).round() as u8;
+        Color32::from_rgba_premultiplied(
+            premultiply(rgb[0]),
+            premultiply(rgb[1]),
+            premultiply(rgb[2]),
+            pixel.a(),
+        )
+    }
+}
+
+/// Rotate a straight RGB colour by `degrees` along the hue wheel.
+fn rotate_hue(rgb: [f32; 3], degrees: f32) -> [f32; 3] {
+    let max = rgb[0].max(rgb[1]).max(rgb[2]);
+    let min = rgb[0].min(rgb[1]).min(rgb[2]);
+    let chroma = max - min;
+    if chroma <= f32::EPSILON {
+        // Grey has no hue to turn.
+        return rgb;
+    }
+
+    let mut hue = if max == rgb[0] {
+        ((rgb[1] - rgb[2]) / chroma).rem_euclid(6.0)
+    } else if max == rgb[1] {
+        (rgb[2] - rgb[0]) / chroma + 2.0
+    } else {
+        (rgb[0] - rgb[1]) / chroma + 4.0
+    }
+    .mul_add(60.0, 0.0);
+
+    hue = (hue + degrees).rem_euclid(360.0);
+    from_hue(hue, chroma, max)
+}
+
+/// Rebuild RGB from a hue in degrees, keeping the original chroma and value.
+fn from_hue(hue: f32, chroma: f32, value: f32) -> [f32; 3] {
+    let sector = hue / 60.0;
+    let x = chroma * (1.0 - (sector.rem_euclid(2.0) - 1.0).abs());
+    let (r, g, b) = match sector as u32 {
+        0 => (chroma, x, 0.0),
+        1 => (x, chroma, 0.0),
+        2 => (0.0, chroma, x),
+        3 => (0.0, x, chroma),
+        4 => (x, 0.0, chroma),
+        _ => (chroma, 0.0, x),
+    };
+    let m = value - chroma;
+    [r + m, g + m, b + m]
+}
+
 /// Everything about a layer except its pixels. Cheap to clone, which is what
 /// makes property undo entries small.
 #[derive(Clone, Debug, PartialEq)]
@@ -281,6 +452,10 @@ pub struct LayerProps {
     /// calls this "Clip to layer below"; it is separate from the alpha lock and
     /// from group masks.
     pub clip_to_below: bool,
+    /// Colour adjustments applied live while the layer is composited. Never
+    /// written into the layer's pixels, so they can be changed or removed at
+    /// any time.
+    pub adjust: Adjustment,
 }
 
 /// One paint layer: its properties plus an RGBA surface.
@@ -304,6 +479,7 @@ impl Layer {
                 blend: BlendMode::Normal,
                 alpha_locked: false,
                 clip_to_below: false,
+                adjust: Adjustment::default(),
             },
             group: None,
             surface: Surface::new(width, height),
@@ -350,6 +526,11 @@ impl Layer {
         self.props.clip_to_below
     }
 
+    /// The layer's live colour adjustments.
+    pub fn adjustment(&self) -> Adjustment {
+        self.props.adjust
+    }
+
     pub fn props(&self) -> LayerProps {
         self.props.clone()
     }
@@ -364,6 +545,7 @@ impl Layer {
         if props.name.trim().is_empty() {
             props.name = self.props.name.clone();
         }
+        props.adjust = props.adjust.sanitised();
         self.props = props;
     }
 
