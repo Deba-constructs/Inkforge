@@ -111,6 +111,14 @@ fn file_menu(app: &mut InkforgeApp, ui: &mut egui::Ui) {
         app.export_image(crate::io::ImageFormat::Jpeg);
         ui.close();
     }
+    if ui
+        .button("Export OpenRaster (.ora)…")
+        .on_hover_text("Layered file for Krita, GIMP, MyPaint and other art apps")
+        .clicked()
+    {
+        app.export_ora();
+        ui.close();
+    }
     ui.separator();
     if ui
         .add(Button::new("Quit").shortcut_text("Ctrl+Q"))

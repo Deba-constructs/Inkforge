@@ -48,9 +48,10 @@ What it does
   brush.
 * Undo and redo across painting, erasing, filling, shapes, layers and groups.
 * Files: .inkforge projects keep every layer, folder and property; PNG and JPEG
-  open, import and export. Your work is autosaved to a recovery copy every 20
-  seconds while it has unsaved changes, and offered back if the app ever
-  closes unexpectedly.
+  open, import and export, and File > Export OpenRaster writes a layered .ora
+  file that Krita, GIMP and MyPaint can open. Your work is autosaved to a
+  recovery copy every 20 seconds while it has unsaved changes, and offered back
+  if the app ever closes unexpectedly.
 * Pan and zoom that stay quick on very large canvases (an 8192 x 8192
   document pans at about 0.7 ms per frame).
 * Canvas rotation: hold Shift and drag with the Pan tool (H) to turn the sheet
@@ -68,7 +69,8 @@ First steps
 2. Scroll to zoom at the cursor; drag with the middle mouse button to pan,
    and hold Shift while dragging with the Pan tool to turn the canvas.
 3. Use File > Save as (Ctrl+Shift+S) to keep your work as an .inkforge project,
-   and File > Export to write a PNG or JPEG.
+   and File > Export to write a PNG or JPEG, or File > Export OpenRaster
+   (.ora) to keep the layers in a format other art apps can open.
 
 
 Keyboard shortcuts
@@ -126,6 +128,11 @@ DEVELOPMENT.md in the source repository.
 * Flood fill is a hard-edged pixel mask with no anti-aliasing.
 * Layer folders cannot be nested, merged or duplicated.
 * JPEG export is fixed at quality 92 and composites transparency onto white.
+* OpenRaster (.ora) is export-only; this build cannot open one back. The format
+  cannot hold masks, live colour adjustments or clip-to-layer-below, so those
+  are baked into each exported layer: the picture matches what you see, but the
+  mask itself does not travel. The file has not yet been opened in Krita or
+  GIMP here, only checked by reading the archive back.
 * Presets are built in; there is no preset editor.
 * This build was compiled and cross-compiled on Linux; it has not been launched
   on Windows or looked at on a real screen yet, so how the interface looks at

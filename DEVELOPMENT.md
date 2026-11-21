@@ -3,12 +3,12 @@
 Living document: environment notes, milestone status, architecture decisions,
 verification log and outstanding work. Updated as milestones land.
 
-Last updated: Milestone 8 — the 1.3.0 Windows executable and portable ZIP were
+Last updated: Milestone 8 — the 1.4.0 Windows executable and portable ZIP were
 built, carrying its INKFORGE icon and version resource. Milestone 7 is still
 open (see §7); 1.1.0 added the full W3C blend set and clip to layer below,
 1.2.0 added a 43-brush library, live per-layer colour adjustments and
-document flips/rotations, and 1.3.0 adds non-destructive layer masks (project
-format version 2).
+document flips/rotations, 1.3.0 added non-destructive layer masks (project
+format version 2), and 1.4.0 adds layered OpenRaster (`.ora`) export.
 
 ---
 
@@ -23,12 +23,12 @@ build):
 | Rust | rustc 1.100.0 (2026-11-09), cargo 1.100.0, installed with rustup (minimal profile) |
 | Crates.io access | Working; `eframe 0.37.0` and its dependency tree resolve and build |
 | Graphics stack available here | No X11/Wayland display and no `sudo` for dev packages, so the window can be compiled but **not launched** in this environment |
-| Windows build | No Windows host and no MSVC linker; the 1.3.0 executable was **cross-compiled on Linux** with `cargo zigbuild` (zig 0.13's bundled MinGW toolchain) for `x86_64-pc-windows-gnu` — see §6 |
+| Windows build | No Windows host and no MSVC linker; the 1.4.0 executable was **cross-compiled on Linux** with `cargo zigbuild` (zig 0.13's bundled MinGW toolchain) for `x86_64-pc-windows-gnu` — see §6 |
 | GUI toolkit | `eframe 0.37` (default renderer family: wgpu) with `egui 0.37` |
 
 **Consequence, stated plainly:** the project targets Windows and builds with
 `x86_64-pc-windows-msvc` on a Windows machine. This container has no Windows and
-no MSVC linker, so the 1.3.0 release was cross-compiled to
+no MSVC linker, so the 1.4.0 release was cross-compiled to
 `x86_64-pc-windows-gnu` with `cargo zigbuild` instead: a real 64-bit Windows GUI
 executable was produced and inspected (§5, §6), but it has **never been run**,
 because nothing here can execute a Windows binary. The clean-machine and artist
@@ -45,7 +45,7 @@ run (the rest of Milestone 8) still has to happen on Windows.
 | 5 | Undo/redo, selection, fill, shapes | **Done** (undo/redo landed early; rectangle selection, flood fill and line/rectangle/ellipse shapes added) |
 | 6 | PNG/JPEG import-export, native `.inkforge`, reliable save/load | **Done** (projects round-trip every layer, group and property; corrupt files are refused with a message; verified by tests, not by hand in the GUI) |
 | 7 | Interface refinement, performance, testing | **In progress** — live window title, recent projects, partial GPU uploads, threaded stamping and the composite tile pyramid landed; see §7 |
-| 8 | Windows release build, portable exe, ZIP, artist testing | **In progress** — 1.2.0 executable, portable folder and ZIP built and inspected; the icon and version resource are embedded and were read back out of the PE; running it on Windows and artist testing remain |
+| 8 | Windows release build, portable exe, ZIP, artist testing | **In progress** — 1.4.0 executable, portable folder and ZIP built and inspected; the icon and version resource are embedded and were read back out of the PE; running it on Windows and artist testing remain |
 
 ## 3. What is implemented so far
 
@@ -466,6 +466,21 @@ adds the three tools that make editing practical.
   as a new document (sized to the image, named after the file) or adds them as a
   new layer above the active one, cropped to the canvas and recorded as one
   undoable insertion.
+* **`io/ora.rs`** — OpenRaster (`.ora`) export, the layered format Krita, GIMP
+  and MyPaint open. It writes a stored ZIP itself — CRC-32 table, local and
+  central headers, end record, DOS timestamps, no compressor dependency —
+  holding `mimetype` (`image/openraster`, first and uncompressed), `stack.xml`,
+  `mergedimage.png`, `Thumbnails/thumbnail.png` (nearest-neighbour, longest edge
+  256 px) and one `data/layerN.png` per paint layer. `stack.xml` follows
+  specification 0.0.6: the root stack carries no attributes, the first element
+  of a stack is the uppermost, groups become `<stack>` elements with
+  `isolation="isolate"`, and all 17 blend modes map to their SVG compositing
+  names (`svg:src-over`, `svg:plus` for linear dodge, `svg:hue` and friends for
+  the four non-separable modes). Because OpenRaster has no portable attribute
+  for masks, live adjustments or clip-to-layer-below, those are baked into each
+  exported layer's pixels so the file looks like the canvas; the `.inkforge`
+  project keeps them editable. The merged image is produced by the same
+  flattening function as PNG export, so the two can never disagree.
 
 ### Milestone 7 — interface polish and performance
 
@@ -659,7 +674,7 @@ canvas rotation, pen pressure.
 | Check | Command | Result |
 | --- | --- | --- |
 | Type/compile check, all targets | `cargo check --all-targets` | Passes, 0 errors, 0 warnings |
-| Tests | `cargo test` | Passes — 277 tests, 0 failures (exit 0): 9 model/viewport/brush/transform, 7 painting, 39 layers/groups, 7 layer alpha lock, 16 blend modes, 9 clipping, 12 layer masks, 16 colour adjustments, 8 history, 7 presets, 6 stabiliser, 50 selection/fill/shapes, 16 headless UI, 9 file I/O, 7 autosave/recovery, 7 recent projects, 11 tile pyramid, 7 surface and stamping performance, 1 pool dispatch, 9 pen pressure/tilt, 2 Win32 pointer layouts, 10 canvas rotation, 8 document transforms |
+| Tests | `cargo test` | Passes — 289 tests, 0 failures (exit 0): 9 model/viewport/brush/transform, 7 painting, 39 layers/groups, 7 layer alpha lock, 16 blend modes, 9 clipping, 12 layer masks, 16 colour adjustments, 8 history, 7 presets, 6 stabiliser, 50 selection/fill/shapes, 16 headless UI, 9 file I/O, 12 OpenRaster export, 7 autosave/recovery, 7 recent projects, 11 tile pyramid, 7 surface and stamping performance, 1 pool dispatch, 9 pen pressure/tilt, 2 Win32 pointer layouts, 10 canvas rotation, 8 document transforms |
 | Canvas rotation | `cargo test --test view_rotation` | A fresh view is upright; a quarter turn sends the page corners where they look like they go; screen and canvas stay exact inverses at eight angles with zoom and pan applied; cursor-anchored zoom on a turned view does not drift; angles accumulate and wrap into (-180°, 180°]; 1.5° near a quarter turn snaps onto it while a deliberate 0.5 rad is left alone; reset and NaN/infinite input behave; a turned landscape page fits into the window height (0.528 at 1000 × 600) instead of the width; the page rectangle itself is not turned. The turned *rendering* has not been looked at — no display here (§8) |
 | Pen pressure and tilt | `cargo test --test pen` and `cargo test --lib pointer` | A mouse leaves the brush exactly as configured; half pressure paints fainter *and* narrower (a dab's footprint stops short of where full pressure reaches); a feather touch still leaves a line above `MIN_DAB_RADIUS`; 60° of tilt widens a 20 px tip to 26 px without changing opacity, and never pushes the brush past `MAX_SIZE`; 0% amounts and the off switch ignore the pen entirely; a NaN/infinite reading falls back to full pressure; a real stroke driven through `begin_stroke`/`extend_stroke` covers 18 px above its path at full pressure but not at 25%; and the Win32 `POINTER_INFO` / `POINTER_PEN_INFO` sizes and field offsets match the 64-bit SDK. The tablet path itself has **not** run — no pen and no Windows here (§8) |
 | Start state | `cargo test --test ui_smoke` | An untouched canvas paints the "Start painting" card, a simulated drag removes it, and undoing the only stroke brings it back (proving the cached empty check follows the composite revision) |
@@ -683,14 +698,15 @@ canvas rotation, pen pressure.
 | Brush rasteriser | `cargo test --test painting` | Stroke continuity along a path, round dab shape, 50% opacity landing ~128 alpha, eraser removing paint, straight-alpha sampling, off-canvas clipping, revision bumps |
 | Selection, fill, shapes | `cargo test --test editing` | Selection normalising and clamping, click-sized drags rejected, painting clipped at the selection edge, select all/clear, fill covering only the matching area, fill clipped to the selection and undoable, fill selection, line/rectangle/ellipse geometry, shapes clipped, selection drag and one-step shape commit through the app, lasso polygon coverage, feather coverage ramps, painting and filling clipped to a lasso, soft edges when painting a feathered selection, a lasso drag through the app, a wand selecting only the connected block it was clicked in (with a boundary outline), its tolerance widening the region to the neighbouring shade at 24 but not at 0, painting following a wand region's shape rather than its bounding box, a feathered wand fading at its edge, the wand mode selecting through the app, growing a rectangle by 4 px on every side and shrinking it back exactly, a 3 × 3 selection shrinking away entirely, growth stopping at the canvas edge, dragging the Grow / shrink slider being relative to the drag's start rather than cumulative, the slider reaching an empty selection and a selection that shrinks away, inverting a rectangle into a canvas-wide hole, feathering surviving an invert, a double invert returning the original, a full-canvas invert leaving nothing, the Invert button through the app, a feathered selection gaining tinted soft-edge spans that stay inside it and skip the fully selected middle, hard selections gaining none, the band surviving both grow and shrink, a hard selection's Quick mask being one solid wash over its bounds, a feathered Quick mask fading to a weaker edge, the wash being cached rather than rebuilt, the Quick mask toggle reporting its state, `Q` toggling the wash through the frame path, brush strokes adding coverage to the mask (inside and outside the old selection, growing its bounds), the eraser removing coverage, a mask stroke leaving every layer pixel untouched and writing no history entry, painting with nothing selected creating a selection, an eraser stroke that clears the last coverage clearing the selection, a painted mask regaining its pixel-edge outline when the stroke ends, and the brush painting the layer again once the Quick mask is off |
 | File I/O | `cargo test --test io` | A project with two layers, a group, a blend mode, opacity, names, group membership and painted pixels round-trips through save/load unchanged; damaged files (bad magic, truncation, a future version, a missing file) are refused with readable messages; an impossible canvas size is rejected; a PNG export reopens as a document with the same pixels; a JPEG export is readable and composites transparency onto white; an imported image becomes a cropped layer above the active one; a text file named `.png` fails cleanly |
+| OpenRaster export | `cargo test --test ora` | An archive with the required layout — `mimetype` first, stored and exact, then `stack.xml`, `mergedimage.png`, `Thumbnails/thumbnail.png` and one `data/layerN.png` per layer — read back by an independent stored-ZIP reader that checks both header sets and every CRC; a 600 × 300 document getting a 256 × 128 thumbnail; layers, groups, names, opacity, visibility and all blend modes reaching `stack.xml` as SVG compositing names with XML-escaped names (`&amp;`, `&quot;`, `&lt;`); the top layer written first; a layer's exported pixels matching its paint; a mask and a live adjustment baked into the exported PNG while the in-memory layer keeps both editable; `mergedimage.png` byte-identical to a PNG export of the same document; a group's opacity and visibility surviving as stack attributes; an unwritable path reported cleanly; and a single-layer document still writing exactly one stream |
 | Autosave and recovery | `cargo test --test recovery` | Unsaved work is written to the slot with its name, size and pixels intact; a clean document writes nothing; a simulated crash leaves a copy that the next session offers, and recovering restores the artwork as unsaved work and refreshes the copy; discard deletes the slot; keep-for-later leaves it; a damaged slot is reported through the error dialog and not deleted; one real frame tick performs the autosave; a plain session has autosave off |
 | Headless UI render | `cargo test --test ui_smoke` | Workspace, canvas, tool rail/sidebar hiding, a group row expanded and collapsed, an empty folder painting its "drag a layer onto this folder" line and dropping that line once a layer lands, a folder row and a layer row each renamed in place painting their draft names, the field opening with the name pre-selected, and giving the old name back on cancel, typing in the properties Name box renaming a layer row and a folder row live while the document stays untouched and then committing as one undo step, a selection drag through the frame path with the dashed overlay, and all five dialog states (new canvas, unsaved changes, file error, about, shortcuts) run egui passes at 1440×900 and at the 900×560 minimum size with no panic and real paint output |
 | Pointer painting (headless) | `cargo test --test ui_smoke` | A simulated press → move → release over the canvas paints real pixels, marks the document modified and ends the stroke |
 | Undo shortcuts (headless) | `cargo test --test ui_smoke` | After a simulated stroke, a synthetic `Ctrl+Z` removes all paint, the redo stack fills, and `Ctrl+Y` restores the stroke — driven through `InkforgeApp::frame`, the same code path the window uses |
 | Application launch | `cargo run` | **Not possible here** (headless Linux container, no display server) |
-| Windows release build | `cargo zigbuild --release --target x86_64-pc-windows-gnu` | **Passes** (1.3.0, exit 0, 27 s warm): a GUI-subsystem PE32+ x86-64 executable, 12.3 MB, imports only DLLs that ship with Windows 10/11 (`kernel32`, `user32`, `gdi32`, `ole32`, `dxgi`, `dwmapi`, `uxtheme`, `bcryptprimitives`, `api-ms-win-crt-*`) — no VCRUNTIME, MSVCP or libgcc/libstdc++ DLL. The only warning is zig's own libunwind `dllexport` redeclaration, from the toolchain |
-| Portable ZIP | `scripts/package-windows-cross.sh` | **Passes**: `dist/INKFORGE-1.3.0-windows-x86_64/` holds `INKFORGE.exe`, `README.txt` and `LICENSE-MIT.txt`; the ZIP is 5.4 MB and unpacks to exactly those three files |
-| Icon and version metadata in the PE | pefile over `target/x86_64-pc-windows-gnu/release/inkforge.exe` | **Passes, as a file read**: the resource directory holds seven `RT_ICON` images (1 128–33 066 bytes: the 16/24/32/48/64 px bitmaps and the 128/256 px PNGs), one `RT_GROUP_ICON`, and an `RT_VERSION` block whose `VS_FIXEDFILEINFO` has signature `0xFEEF04BD`, file and product version `1.3.0.0`, `VOS_NT_WINDOWS32` and `VFT_APP`; all eight string fields are present (`ProductName` INKFORGE, `FileDescription` "INKFORGE - a digital painting application for artists", `CompanyName`, `FileVersion` 1.2.0, `InternalName`, `LegalCopyright`, `OriginalFilename` INKFORGE.exe, `ProductVersion`). Explorer and Task Manager were **not** opened to look at it (§8) |
+| Windows release build | `cargo zigbuild --release --target x86_64-pc-windows-gnu` | **Passes** (1.4.0, exit 0, 35 s warm): a GUI-subsystem PE32+ x86-64 executable, 12.3 MB, imports only DLLs that ship with Windows 10/11 (`kernel32`, `user32`, `gdi32`, `ole32`, `dxgi`, `dwmapi`, `uxtheme`, `bcryptprimitives`, `api-ms-win-crt-*`) — no VCRUNTIME, MSVCP or libgcc/libstdc++ DLL. The only warning is zig's own libunwind `dllexport` redeclaration, from the toolchain |
+| Portable ZIP | `scripts/package-windows-cross.sh` | **Passes**: `dist/INKFORGE-1.4.0-windows-x86_64/` holds `INKFORGE.exe` (12 916 736 bytes), `README.txt` and `LICENSE-MIT.txt`; the ZIP is 5 657 833 bytes (5.4 MB) and unpacks to exactly those files |
+| Icon and version metadata in the PE | pefile over `target/x86_64-pc-windows-gnu/release/inkforge.exe` | **Passes, as a file read**: the resource directory holds seven `RT_ICON` images (1 128–33 066 bytes: the 16/24/32/48/64 px bitmaps and the 128/256 px PNGs), one `RT_GROUP_ICON`, and an `RT_VERSION` block whose `VS_FIXEDFILEINFO` has signature `0xFEEF04BD`, file and product version `1.4.0.0`, `VOS_NT_WINDOWS32` and `VFT_APP`; all eight string fields are present (`ProductName` INKFORGE, `FileDescription` "INKFORGE - a digital painting application for artists", `CompanyName`, `FileVersion` 1.4.0, `InternalName`, `LegalCopyright`, `OriginalFilename` INKFORGE.exe, `ProductVersion`). Explorer and Task Manager were **not** opened to look at it (§8) |
 | Running the release on Windows | double-click `INKFORGE.exe` | **Not possible here** (Linux, no Windows, no display); the executable has never been launched — see §8 |
 
 What is therefore verified: the code compiles cleanly against the real
@@ -730,7 +746,7 @@ stroke, and is undone and redone by Ctrl+Z / Ctrl+Y.
   of silently painting the layer; the brush and eraser are the mask tools.
   Mask documents are project format version 2, so 1.1.0/1.2.0 builds refuse
   them (with a "newer INKFORGE" message) rather than misreading the streams;
-  version 1 projects still open in 1.3.0. A mask is a full canvas buffer, so it
+  version 1 projects still open in 1.4.0. A mask is a full canvas buffer, so it
   costs one extra canvas image of memory per masked layer.
 * Layer-mask rendering has been verified at the composite level and through
   save/load, never by eye on a screen (§8).
@@ -816,9 +832,17 @@ stroke, and is undone and redone by Ctrl+Z / Ctrl+Y.
   skipped mid-stroke). Older recovery copies are overwritten rather than kept as
   a version history.
 * JPEG export always uses quality 92 and composites transparency onto white;
-  there is no quality control, no DPI/metadata writing, and no other export
-  format. Imported images are placed at the top-left and cropped to the canvas —
+  there is no quality control, no DPI/metadata writing and no WebP/TIFF/PSD
+  output. Imported images are placed at the top-left and cropped to the canvas —
   there is no scaling, placement or transform on import.
+* OpenRaster is export-only: `.ora` files cannot be opened, so a round trip
+  through Krita or GIMP and back is not possible yet. Masks, live adjustments
+  and clip-to-layer-below are baked into the exported layer pixels (the picture
+  is right, the editable mask is not in the file), group opacity is written on
+  an isolated `<stack>` rather than multiplied into each child, and no DPI
+  (`xres`/`yres`) is written. The archive has been verified structurally —
+  layout, CRCs, XML, pixels, thumbnail — and with Python's `zipfile`, but it has
+  **not** been opened in Krita, GIMP or MyPaint (§8).
 * Opening an image as a document does not associate a project path, so `Ctrl+S`
   asks for a `.inkforge` name; PNG/JPEG are export-only.
 * The native file dialogs (`rfd`) could not be opened in this headless
@@ -826,7 +850,7 @@ stroke, and is undone and redone by Ctrl+Z / Ctrl+Y.
   unverified until the app runs on a desktop.
 * No pen pressure/tilt; pointer position only.
 * No canvas rotation yet.
-* The 1.2.0 Windows package was cross-compiled on Linux and verified only as a
+* The 1.4.0 Windows package was cross-compiled on Linux and verified only as a
   file: 64-bit, GUI subsystem, system-only imports, 12.3 MB. It has never been
   executed, so its GPU initialisation, window creation, fonts and file dialogs
   on Windows are all unconfirmed — as is anything about how it looks at a given
@@ -835,7 +859,7 @@ stroke, and is undone and redone by Ctrl+Z / Ctrl+Y.
   PE, not by looking at Windows: the `.ico` images and the `VERSIONINFO` strings
   are present and correct, but how Explorer, the task bar and Task Manager draw
   them at a given DPI, and whether the icon reads well at 16 px on a real
-  desktop, have not been seen. The About dialog shows the same 1.3.0 from the
+  desktop, have not been seen. The About dialog shows the same 1.4.0 from the
   compiled-in crate version.
 * The ZIP is unsigned. A downloaded copy will raise a SmartScreen warning on
   first run unless it is code-signed, which it is not.
@@ -909,7 +933,7 @@ The icon is drawn by `python3 scripts/make-icon.py`, which writes
 
 ### 6b. Cross-compiling the release from Linux
 
-This is how 1.3.0 was actually produced here, since the container has no
+This is how 1.4.0 was actually produced here, since the container has no
 Windows and no MSVC linker:
 
 ```bash

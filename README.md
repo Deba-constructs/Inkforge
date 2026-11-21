@@ -7,7 +7,7 @@
 A desktop digital painting application for artists, written in Rust with
 `egui`/`eframe` and a GPU (wgpu) renderer.
 
-**Download for Windows** — the [1.3.0 release](https://github.com/Deba-constructs/Inkforge/releases/latest)
+**Download for Windows** — the [1.4.0 release](https://github.com/Deba-constructs/Inkforge/releases/latest)
 is a portable ZIP: unzip it, double-click `INKFORGE.exe`, nothing to install
 and no runtime to set up.
 
@@ -20,12 +20,13 @@ reordering, 17 blending modes, live colour adjustments, per-layer masks that
 hide and reveal artwork without deleting it, clipping to the layer below and a
 per-layer transparency lock, flips and rotations of the whole document, rectangle, freehand and magic-wand selections with feathering that clip
 every edit, a flood fill, line / rectangle / ellipse shapes, undo/redo covering all of
-it, and real file I/O: `.inkforge` projects that keep every layer, plus PNG and
-JPEG opening, importing and export, a window title that tracks the document and
+it, and real file I/O: `.inkforge` projects that keep every layer, PNG and JPEG
+opening, importing and export, layered OpenRaster (`.ora`) export that Krita,
+GIMP and MyPaint open, a window title that tracks the document and
 its unsaved state, a recent-projects menu, GPU uploads that copy only the part
 of the canvas that changed, canvas rotation that turns the sheet like a drawing
 board, and large brushes stamped across several CPU cores.
-The rest of the polish pass is next. Version 1.3.0 has been built into a
+The rest of the polish pass is next. Version 1.4.0 has been built into a
 portable Windows executable and packaged as a downloadable ZIP (see
 [Release package](#release-package)). See
 [DEVELOPMENT.md](DEVELOPMENT.md) for the exact state of every feature.
@@ -59,7 +60,7 @@ portable Windows executable and packaged as a downloadable ZIP (see
 | Tooltips | Working; every tool, brush slider, fill/selection option and layer button names its shortcut and explains what it changes |
 | New canvas dialog with presets, size validation and memory estimate | Working |
 | Keyboard shortcuts, About and Shortcuts windows | Working |
-| File I/O: `.inkforge` projects (layers, groups, blends, all of it), PNG/JPEG open and import, PNG/JPEG export of the flattened image | Working; Save / Save as / Open with `Ctrl+S`, `Ctrl+Shift+S`, `Ctrl+O`, and an unsaved-changes prompt before anything replaces your work |
+| File I/O: `.inkforge` projects (layers, groups, blends, all of it), PNG/JPEG open and import, PNG/JPEG export of the flattened image, and OpenRaster (`.ora`) export of the whole layer stack | Working; Save / Save as / Open with `Ctrl+S`, `Ctrl+Shift+S`, `Ctrl+O`, and an unsaved-changes prompt before anything replaces your work. The `.ora` file is checked by reading the archive back (structure, CRCs, layer tree, pixels); it has not been opened in Krita or GIMP yet |
 | Autosave and crash recovery | Working; unsaved work is written to a recovery copy every 20 seconds and offered back the next time the app starts |
 | Window title | Working; shows the document name and a bullet while there are unsaved changes |
 | Recent projects | Working; File ▸ Open recent lists the last eight `.inkforge` projects, newest first, and forgets files that have gone |
@@ -71,7 +72,7 @@ disabled and carry a tooltip saying which milestone delivers them.
 
 ## What is missing
 
-Version 1.2.0 is a genuinely usable painting app rather than a finished one.
+Version 1.4.0 is a genuinely usable painting app rather than a finished one.
 These are the gaps, and the table above does not paper over them:
 
 * **No image transform.** A layer or selection cannot be scaled, flipped,
@@ -82,7 +83,14 @@ These are the gaps, and the table above does not paper over them:
   Adjustment layers with curves or levels are not implemented.
 * **The project format is version 2.** Masks live in it, so a 1.3.0 file opens
   in 1.1.0/1.2.0 only if those builds refuse it — they do, with a clear "made by
-  a newer INKFORGE" message. Version 1 projects still open in 1.3.0.
+  a newer INKFORGE" message. Version 1 projects still open in 1.4.0.
+* **OpenRaster is export-only.** `.ora` files cannot be opened, and the format
+  has no portable attribute for masks, live colour adjustments or clip to layer
+  below, so those are baked into each exported layer's pixels — the picture
+  looks the same, but the mask and the adjustment are no longer editable in the
+  app that opens it. Group opacity is written as a stack attribute over an
+  isolated group, a slight difference from INKFORGE's per-child group opacity
+  when a group is partly transparent.
 * **The Windows executable is unsigned**, so SmartScreen warns the first time it
   runs. Choose *More info ▸ Run anyway*, or build it yourself.
 * **The pen path has not met a real tablet.** Pressure and tilt are implemented
@@ -110,8 +118,8 @@ the Rust runtime is statically linked, so end users need no Rust installation.
 
 ### Release package
 
-`1.3.0` is published on the [releases page](https://github.com/Deba-constructs/Inkforge/releases/latest)
-as `INKFORGE-1.3.0-windows-x86_64.zip` (5.4 MB). It holds `INKFORGE.exe`
+`1.4.0` is published on the [releases page](https://github.com/Deba-constructs/Inkforge/releases/latest)
+as `INKFORGE-1.4.0-windows-x86_64.zip` (5.4 MB). It holds `INKFORGE.exe`
 (12.3 MB, 64-bit Windows GUI executable), a `README.txt` for the artist and the
 licence, and the release notes list its SHA-256. Nothing needs installing: unzip
 it and run the executable. The two scripts below rebuild the same ZIP locally
@@ -121,7 +129,7 @@ into `dist/`.
 # On Windows, with the MSVC toolchain:
 powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1
 
-# On Linux, cross-compiled with cargo-zigbuild (how 1.2.0 was produced):
+# On Linux, cross-compiled with cargo-zigbuild (how the 1.4.0 ZIP was produced):
 rustup target add x86_64-pc-windows-gnu
 cargo install cargo-zigbuild    # needs `zig` on PATH
 scripts/package-windows-cross.sh
@@ -132,7 +140,7 @@ Both scripts write the same layout: a portable folder under `dist/` and its
 (`kernel32`, `user32`, `d3d`/`dxgi`, `dwmapi`, the `api-ms-win-crt-*` runtime),
 so no Visual C++ redistributable or MinGW runtime is needed. The executable
 carries its own icon (seven sizes, 16 to 256 px) and version metadata, so
-Explorer, the task bar and Task Manager show **INKFORGE 1.3.0** instead of a
+Explorer, the task bar and Task Manager show **INKFORGE 1.4.0** instead of a
 generic binary.
 
 Both packaging scripts go through `build.rs`, which compiles
@@ -200,6 +208,7 @@ src/
 ├── io/
 │   ├── project.rs     the .inkforge container: JSON manifest + PNG layers and masks
 │   ├── raster.rs      PNG/JPEG decode, flatten-and-export, image import
+│   ├── ora.rs         OpenRaster export: stack.xml, PNG streams, stored ZIP
 │   ├── recent.rs      the persisted recent-projects list
 │   └── recovery.rs    autosave slot, sidecar metadata, crash recovery
 └── ui/
@@ -225,6 +234,7 @@ tests/
 ├── stabilizer.rs      smoothing, lag limit, pass-through
 ├── pen.rs             pressure/tilt mapping, mouse fallback, bad readings
 ├── io.rs              project round trips, corrupt files, PNG/JPEG export and import
+├── ora.rs             OpenRaster archive layout, layer tree, baked masks and adjustments
 ├── recovery.rs        autosave ticking, crash recovery, discard and keep-for-later
 ├── recent.rs          recent-project ordering, cap, pruning and reopening
 ├── tiles.rs           composite tile pyramid: levels, uploads, downscaling

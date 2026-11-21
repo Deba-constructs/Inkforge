@@ -8,11 +8,13 @@
 //!
 //! [`Canvas`]: crate::engine::Canvas
 
+pub mod ora;
 pub mod project;
 pub mod raster;
 pub mod recent;
 pub mod recovery;
 
+pub use ora::export_ora;
 pub use project::{load_project, save_project};
 pub use raster::{export_image, open_image, read_image, ImageFormat};
 pub use recovery::RecoveryInfo;

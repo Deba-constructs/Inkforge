@@ -990,6 +990,38 @@ impl InkforgeApp {
         }
     }
 
+    /// Export the whole document — every layer and group — as an OpenRaster
+    /// file, the layered format Krita, GIMP and MyPaint read.
+    pub fn export_ora(&mut self) {
+        self.end_stroke();
+
+        let name = format!("{}.ora", default_file_stem(self.canvas.name()));
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("OpenRaster", &["ora"])
+            .set_file_name(name);
+        if let Some(dir) = &self.last_dir {
+            dialog = dialog.set_directory(dir);
+        }
+
+        let Some(path) = dialog.save_file() else {
+            self.set_status("Export cancelled — nothing was written.");
+            return;
+        };
+        let path = ensure_extension(path, &["ora"]);
+
+        match io::export_ora(&mut self.canvas, &path) {
+            Ok(()) => {
+                self.last_dir = path.parent().map(Path::to_path_buf);
+                self.set_status(format!(
+                    "Exported {} layers to {}",
+                    self.canvas.layer_count(),
+                    display_path(&path)
+                ));
+            }
+            Err(error) => self.fail("The document could not be exported", error),
+        }
+    }
+
     /// True when it is safe to continue; otherwise ask about unsaved work.
     fn guard_unsaved(&mut self, action: PendingAction) -> bool {
         if self.canvas.modified() {

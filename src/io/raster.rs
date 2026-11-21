@@ -56,21 +56,7 @@ pub fn export_image(
     path: &Path,
     format: ImageFormat,
 ) -> Result<(), String> {
-    let (width, height) = (canvas.width(), canvas.height());
-    let background = canvas.background().fill();
-    let composite = canvas.composite();
-
-    let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
-    for y in 0..height {
-        for x in 0..width {
-            let painted = composite.pixel(x, y);
-            let visible = match background {
-                Some(backdrop) => composite_pixel(backdrop, painted, BlendMode::Normal, 1.0),
-                None => painted,
-            };
-            rgba.extend_from_slice(&straight_rgba(visible));
-        }
-    }
+    let (width, height, rgba) = flatten_rgba(canvas);
 
     match format {
         ImageFormat::Png => {
@@ -104,6 +90,30 @@ pub fn export_image(
                 .map_err(|error| format!("Could not encode the JPEG: {error}"))
         }
     }
+}
+
+/// Flatten every visible layer over the document background and return the
+/// result as straight-alpha RGBA bytes, row major.
+///
+/// Shared by PNG/JPEG export and by the OpenRaster writer, so both always
+/// produce exactly the same visible picture.
+pub(crate) fn flatten_rgba(canvas: &mut Canvas) -> (u32, u32, Vec<u8>) {
+    let (width, height) = (canvas.width(), canvas.height());
+    let background = canvas.background().fill();
+    let composite = canvas.composite();
+
+    let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+    for y in 0..height {
+        for x in 0..width {
+            let painted = composite.pixel(x, y);
+            let visible = match background {
+                Some(backdrop) => composite_pixel(backdrop, painted, BlendMode::Normal, 1.0),
+                None => painted,
+            };
+            rgba.extend_from_slice(&straight_rgba(visible));
+        }
+    }
+    (width, height, rgba)
 }
 
 /// Decode any PNG or JPEG into premultiplied pixels, row major.
