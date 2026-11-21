@@ -7,7 +7,7 @@
 A desktop digital painting application for artists, written in Rust with
 `egui`/`eframe` and a GPU (wgpu) renderer.
 
-**Download for Windows** — the [1.0.0 release](https://github.com/Deba-constructs/Inkforge/releases/latest)
+**Download for Windows** — the [1.1.0 release](https://github.com/Deba-constructs/Inkforge/releases/latest)
 is a portable ZIP: unzip it, double-click `INKFORGE.exe`, nothing to install
 and no runtime to set up.
 
@@ -22,7 +22,7 @@ JPEG opening, importing and export, a window title that tracks the document and
 its unsaved state, a recent-projects menu, GPU uploads that copy only the part
 of the canvas that changed, canvas rotation that turns the sheet like a drawing
 board, and large brushes stamped across several CPU cores.
-The rest of the polish pass is next. Version 1.0.0 has been built into a
+The rest of the polish pass is next. Version 1.1.0 has been built into a
 portable Windows executable and packaged as a downloadable ZIP (see
 [Release package](#release-package)). See
 [DEVELOPMENT.md](DEVELOPMENT.md) for the exact state of every feature.
@@ -65,7 +65,7 @@ disabled and carry a tooltip saying which milestone delivers them.
 
 ## What is missing
 
-Version 1.0.0 is a genuinely usable painting app rather than a finished one.
+Version 1.1.0 is a genuinely usable painting app rather than a finished one.
 These are the gaps, and the table above does not paper over them:
 
 * **No image transform.** A layer or selection cannot be scaled, flipped,
@@ -99,8 +99,8 @@ the Rust runtime is statically linked, so end users need no Rust installation.
 
 ### Release package
 
-`1.0.0` is published on the [releases page](https://github.com/Deba-constructs/Inkforge/releases/latest)
-as `INKFORGE-1.0.0-windows-x86_64.zip` (5.6 MB). It holds `INKFORGE.exe`
+`1.1.0` is published on the [releases page](https://github.com/Deba-constructs/Inkforge/releases/latest)
+as `INKFORGE-1.1.0-windows-x86_64.zip` (5.6 MB). It holds `INKFORGE.exe`
 (12.8 MB, 64-bit Windows GUI executable), a `README.txt` for the artist and the
 licence, and the release notes list its SHA-256. Nothing needs installing: unzip
 it and run the executable. The two scripts below rebuild the same ZIP locally
@@ -110,7 +110,7 @@ into `dist/`.
 # On Windows, with the MSVC toolchain:
 powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1
 
-# On Linux, cross-compiled with cargo-zigbuild (how 1.0.0 was produced):
+# On Linux, cross-compiled with cargo-zigbuild (how 1.1.0 was produced):
 rustup target add x86_64-pc-windows-gnu
 cargo install cargo-zigbuild    # needs `zig` on PATH
 scripts/package-windows-cross.sh
@@ -121,7 +121,7 @@ Both scripts write the same layout: a portable folder under `dist/` and its
 (`kernel32`, `user32`, `d3d`/`dxgi`, `dwmapi`, the `api-ms-win-crt-*` runtime),
 so no Visual C++ redistributable or MinGW runtime is needed. The executable
 carries its own icon (seven sizes, 16 to 256 px) and version metadata, so
-Explorer, the task bar and Task Manager show **INKFORGE 1.0.0** instead of a
+Explorer, the task bar and Task Manager show **INKFORGE 1.1.0** instead of a
 generic binary.
 
 Both packaging scripts go through `build.rs`, which compiles
