@@ -38,7 +38,7 @@ run (the rest of Milestone 8) still has to happen on Windows.
 | 1 | Project init, Rust config, desktop window, main UI | **Done** (compiles clean; window not launched — no display here) |
 | 2 | Interactive canvas, freehand drawing, brush size/colour, eraser | **Done** (compiles clean; painting verified by tests and a simulated pointer drag, not yet by eye) |
 | 3 | Brush presets, stroke smoothing, opacity, better painting engine | **Done** (presets differ in edge softness, spacing, grain and flow; the stabiliser adapts to pointer speed) |
-| 4 | Layer architecture and layer manager | **Done** (add/delete/reorder/rename, visibility, opacity, five blend modes, layer-aware undo; verified by tests, not by eye) |
+| 4 | Layer architecture and layer manager | **Done** (add/delete/reorder/rename, visibility, opacity, 17 blend modes, clip to layer below, layer-aware undo; verified by tests, not by eye) |
 | 5 | Undo/redo, selection, fill, shapes | **Done** (undo/redo landed early; rectangle selection, flood fill and line/rectangle/ellipse shapes added) |
 | 6 | PNG/JPEG import-export, native `.inkforge`, reliable save/load | **Done** (projects round-trip every layer, group and property; corrupt files are refused with a message; verified by tests, not by hand in the GUI) |
 | 7 | Interface refinement, performance, testing | **In progress** — live window title, recent projects, partial GPU uploads, threaded stamping and the composite tile pyramid landed; see §7 |
@@ -169,11 +169,20 @@ Real, working behaviour (not painted mock-ups):
 ### Milestone 4 — layers
 
 * **Layer model** (`layers/layer.rs`) — every layer owns its own premultiplied
-  RGBA surface plus a name, visibility flag, opacity, blend mode and an
-  alpha-lock flag. Five blend
-  modes (Normal, Multiply, Screen, Overlay, Add) use W3C compositing maths: the
-  layer's alpha scales its contribution and drives destination coverage, so
-  opacity and blending combine predictably instead of being approximated.
+  RGBA surface plus a name, visibility flag, opacity, blend mode, an
+  alpha-lock flag and a clip-to-below flag. Seventeen blend
+  modes use W3C compositing maths: Normal, Multiply, Screen, Overlay, Soft
+  Light, Hard Light, Linear Dodge, Color Dodge, Color Burn, Darken, Lighten,
+  Difference, Exclusion, Hue, Saturation, Color and Luminosity. The layer's
+  alpha scales its contribution and drives destination coverage, so opacity and
+  blending combine predictably instead of being approximated. "Add" and "Linear
+  Dodge" are one formula in the specification and in Photoshop, Krita and Clip
+  Studio Paint alike, so this is one mode labelled *Linear Dodge (Add)* rather
+  than two names for one operation. The four non-separable modes (Hue,
+  Saturation, Color, Luminosity) blend the colour as a whole through the
+  specified set-lum / set-sat / clip-colour steps. Premultiplied output is
+  clamped to its own alpha, so a dodge cannot leave colour behind transparent
+  pixels.
 * **Layer stack** (`layers/stack.rs`) — bottom-to-top ordering with stable ids,
   an active index, and add / insert / remove / move operations. The last layer
   cannot be removed, so there is always somewhere to paint. Painting targets the
@@ -189,6 +198,14 @@ Real, working behaviour (not painted mock-ups):
   field, opacity slider, blend-mode picker and a *Lock transparent pixels*
   checkbox. The header reports the layer count, row count and the memory the
   stack uses.
+* **Clip to layer below** — CSP's alpha inheritance, as a second layer property
+  (`clip_to_below`). It is a compositing feature, not a pixel edit: the clipped
+  layer keeps every pixel, its opacity and its blend mode, and the stack
+  multiplies its source alpha by the base layer's alpha per pixel
+  (`composite_pixel_masked`). A run of clipped layers all inherit from the same
+  base, hiding the base hides its clipped children, and a clipped layer with
+  nothing below draws nothing. Clipping is resolved per sibling run, so it also
+  works inside a group. It undoes in one step and is written to the manifest.
 * **Lock transparent pixels** — CSP's alpha lock, as a layer property (so it
   undoes in one step like opacity, and older projects load with it off). The
   rasteriser has a locked path: a pixel with zero alpha is skipped, and a
@@ -622,7 +639,7 @@ canvas rotation, pen pressure.
 | Check | Command | Result |
 | --- | --- | --- |
 | Type/compile check, all targets | `cargo check --all-targets` | Passes, 0 errors, 0 warnings |
-| Tests | `cargo test` | Passes — 210 tests, 0 failures (exit 0): 7 model/viewport/brush, 7 painting, 39 layers/groups, 7 layer alpha lock, 8 history, 7 presets, 6 stabiliser, 50 selection/fill/shapes, 16 headless UI, 9 file I/O, 7 autosave/recovery, 7 recent projects, 11 tile pyramid, 7 surface and stamping performance, 1 pool dispatch, 9 pen pressure/tilt, 2 Win32 pointer layouts, 10 canvas rotation |
+| Tests | `cargo test` | Passes — 235 tests, 0 failures (exit 0): 7 model/viewport/brush, 7 painting, 39 layers/groups, 7 layer alpha lock, 16 blend modes, 9 clipping, 8 history, 7 presets, 6 stabiliser, 50 selection/fill/shapes, 16 headless UI, 9 file I/O, 7 autosave/recovery, 7 recent projects, 11 tile pyramid, 7 surface and stamping performance, 1 pool dispatch, 9 pen pressure/tilt, 2 Win32 pointer layouts, 10 canvas rotation |
 | Canvas rotation | `cargo test --test view_rotation` | A fresh view is upright; a quarter turn sends the page corners where they look like they go; screen and canvas stay exact inverses at eight angles with zoom and pan applied; cursor-anchored zoom on a turned view does not drift; angles accumulate and wrap into (-180°, 180°]; 1.5° near a quarter turn snaps onto it while a deliberate 0.5 rad is left alone; reset and NaN/infinite input behave; a turned landscape page fits into the window height (0.528 at 1000 × 600) instead of the width; the page rectangle itself is not turned. The turned *rendering* has not been looked at — no display here (§8) |
 | Pen pressure and tilt | `cargo test --test pen` and `cargo test --lib pointer` | A mouse leaves the brush exactly as configured; half pressure paints fainter *and* narrower (a dab's footprint stops short of where full pressure reaches); a feather touch still leaves a line above `MIN_DAB_RADIUS`; 60° of tilt widens a 20 px tip to 26 px without changing opacity, and never pushes the brush past `MAX_SIZE`; 0% amounts and the off switch ignore the pen entirely; a NaN/infinite reading falls back to full pressure; a real stroke driven through `begin_stroke`/`extend_stroke` covers 18 px above its path at full pressure but not at 25%; and the Win32 `POINTER_INFO` / `POINTER_PEN_INFO` sizes and field offsets match the 64-bit SDK. The tablet path itself has **not** run — no pen and no Windows here (§8) |
 | Start state | `cargo test --test ui_smoke` | An untouched canvas paints the "Start painting" card, a simulated drag removes it, and undoing the only stroke brings it back (proving the cached empty check follows the composite revision) |
@@ -638,6 +655,8 @@ canvas rotation, pen pressure.
 | Stabiliser | `cargo test --test stabilizer` | 0% is exact, shaky paths are flattened, lag never exceeds the 26 px limit, light smoothing follows closely, a held pointer converges, non-finite input is ignored |
 | Undo/redo | `cargo test --test history` | Stroke undo/redo round trip, undo restoring only the painted area, undoing an erase, redo invalidation, empty edits not recorded, 256 MB-style trimming keeping the newest edit, no-op undo on empty history, a stroke staying on its own layer |
 | Layers and groups | `cargo test --test layers` | Default single layer, add-above-and-select, last-layer protection, reorder changing what composites on top, hide/show, 50% opacity maths, multiply blending, dirty-region composite caching, undoable add/delete, painting landing on the selected layer, duplicate copying pixels and properties, merge down baking both sides as one undo step, merge undo restoring the removed layer and target pixels, merge redo re-applying the pixels, the merge snapshot staying proportional to the merged layer rather than the canvas, undo moving a merged layer rather than copying it, the bottom layer refusing to merge, thumbnails keeping the canvas aspect, flatten baking the visible stack (and its undo/redo), flatten history not retaining a third canvas image, hidden layers being discarded but restored by undo, drag-to-reorder slot maths and a no-op drag adding no history, grouping a layer (and refusal to nest), group visibility and opacity reaching every child, adding a layer into the selected group, deleting a group as one undo step, painting refused while a group is selected, collapse being view-only, slots mapping to the group whose block holds them, dragging a top-level layer into a group (one undo step, undone back to the top level) and dragging a layer out of a group (undo and redo changing its group back and forth) |
+| Blend modes | `cargo test --test blending` | Every W3C formula checked against hand-computed values (multiply, screen, overlay, hard light, soft light, linear dodge, colour dodge and burn, darken, lighten, difference, exclusion, hue, saturation, colour, luminosity); a transparent backdrop leaves each mode's colour intact; a half-opaque white layer stores premultiplied colour as well as half alpha (the old code scaled only alpha and painted too bright); blending happens during stack compositing; every mode has a unique key and rounds trips through save/load; an older project's missing blend key loads as Normal and `add` loads as linear dodge |
+| Clip to layer below | `cargo test --test clipping` | A clipped layer shows only where the base has paint and keeps its own colour; several clipped layers share one base; hiding the base hides its children; a clipped layer with nothing below draws nothing; clipping works inside a group and a hidden group hides the run; the clipped layer keeps its blend mode and opacity; a fully transparent base hides everything; the property is one undo step; and it survives saving and loading |
 | Lock transparent pixels | `cargo test --test locking` | The lock is off on a fresh layer; a locked stroke recolours an existing disc while its alpha stays exactly 255, and leaves no pixel behind where the same stroke crossed transparency; a locked eraser cannot remove paint; a locked fill recolours the covered area and creates nothing outside it; unlocking lets paint reach empty pixels again; a locked shape line stays inside the existing paint; and the flag survives saving and loading a project. The checkbox and padlock have not been looked at — no display here (§8) |
 | Brush rasteriser | `cargo test --test painting` | Stroke continuity along a path, round dab shape, 50% opacity landing ~128 alpha, eraser removing paint, straight-alpha sampling, off-canvas clipping, revision bumps |
 | Selection, fill, shapes | `cargo test --test editing` | Selection normalising and clamping, click-sized drags rejected, painting clipped at the selection edge, select all/clear, fill covering only the matching area, fill clipped to the selection and undoable, fill selection, line/rectangle/ellipse geometry, shapes clipped, selection drag and one-step shape commit through the app, lasso polygon coverage, feather coverage ramps, painting and filling clipped to a lasso, soft edges when painting a feathered selection, a lasso drag through the app, a wand selecting only the connected block it was clicked in (with a boundary outline), its tolerance widening the region to the neighbouring shade at 24 but not at 0, painting following a wand region's shape rather than its bounding box, a feathered wand fading at its edge, the wand mode selecting through the app, growing a rectangle by 4 px on every side and shrinking it back exactly, a 3 × 3 selection shrinking away entirely, growth stopping at the canvas edge, dragging the Grow / shrink slider being relative to the drag's start rather than cumulative, the slider reaching an empty selection and a selection that shrinks away, inverting a rectangle into a canvas-wide hole, feathering surviving an invert, a double invert returning the original, a full-canvas invert leaving nothing, the Invert button through the app, a feathered selection gaining tinted soft-edge spans that stay inside it and skip the fully selected middle, hard selections gaining none, the band surviving both grow and shrink, a hard selection's Quick mask being one solid wash over its bounds, a feathered Quick mask fading to a weaker edge, the wash being cached rather than rebuilt, the Quick mask toggle reporting its state, `Q` toggling the wash through the frame path, brush strokes adding coverage to the mask (inside and outside the old selection, growing its bounds), the eraser removing coverage, a mask stroke leaving every layer pixel untouched and writing no history entry, painting with nothing selected creating a selection, an eraser stroke that clears the last coverage clearing the selection, a painted mask regaining its pixel-edge outline when the stroke ends, and the brush painting the layer again once the Quick mask is off |
@@ -701,6 +720,14 @@ stroke, and is undone and redone by Ctrl+Z / Ctrl+Y.
   bring it back), and a merge keeps the whole merged-away layer. Undo and redo
   no longer duplicate those layers, but the retained copy still counts against
   the 256 MB cap; strokes stay tile-sized.
+* Clipping is resolved against the sibling run the layer sits in. A clipped
+  layer placed directly under a folder clips to nothing (folders are not a base
+  layer), and clipping cannot reach down into a folder's contents. Merge down
+  and flatten composite through the stack, so they keep clipping; merging a
+  clipped layer down clears the flag (as Photoshop does) but the pixels are
+  baked unclipped, so the merged result can differ from what was on screen.
+  The *Clip to layer below* checkbox and its effect have not been looked at on
+  a real screen (§8).
 * Layers cannot be linked. Merging down bakes the upper layer with its own blend
   mode and opacity; if the receiving layer also has a blend mode or partial
   opacity, the merged pixels are very close to, but not bit-identical with, what

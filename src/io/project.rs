@@ -64,6 +64,10 @@ struct LayerDto {
     /// field and load with the lock off.
     #[serde(default)]
     alpha_locked: bool,
+    /// "Clip to layer below" (alpha inheritance). Older projects have no such
+    /// field and load unclipped.
+    #[serde(default)]
+    clip_to_below: bool,
     /// Length of this layer's PNG stream, in bytes.
     image: u32,
 }
@@ -112,23 +116,11 @@ impl From<BackgroundDto> for Background {
 }
 
 fn blend_name(blend: BlendMode) -> &'static str {
-    match blend {
-        BlendMode::Normal => "normal",
-        BlendMode::Multiply => "multiply",
-        BlendMode::Screen => "screen",
-        BlendMode::Overlay => "overlay",
-        BlendMode::Add => "add",
-    }
+    blend.key()
 }
 
 fn parse_blend(name: &str) -> BlendMode {
-    match name.to_ascii_lowercase().as_str() {
-        "multiply" => BlendMode::Multiply,
-        "screen" => BlendMode::Screen,
-        "overlay" => BlendMode::Overlay,
-        "add" => BlendMode::Add,
-        _ => BlendMode::Normal,
-    }
+    BlendMode::from_key(name)
 }
 
 /// Write `canvas` to `path` as an `.inkforge` project.
@@ -148,6 +140,7 @@ pub fn save_project(path: &Path, canvas: &Canvas) -> Result<(), String> {
                     blend: blend_name(layer.blend()).to_owned(),
                     group: layer.group(),
                     alpha_locked: layer.alpha_locked(),
+                    clip_to_below: layer.clip_to_below(),
                     image: png.len() as u32,
                 }));
                 images.push(png);
@@ -286,6 +279,7 @@ pub fn load_project(path: &Path) -> Result<Canvas, String> {
                     opacity: layer.opacity,
                     blend: parse_blend(&layer.blend),
                     alpha_locked: layer.alpha_locked,
+                    clip_to_below: layer.clip_to_below,
                 });
                 created.set_group(layer.group);
                 entries.push(Entry::Layer(created));

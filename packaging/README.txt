@@ -17,12 +17,15 @@ What it does
   each dab is and tilt fans the tip out, with the three amounts in the Drawing
   tablet panel. A mouse, or a pen lifted off the tablet, paints at full
   pressure, so nothing changes if you do not have one.
-* Layers with visibility, opacity, five blend modes, reordering, renaming,
+* Layers with visibility, opacity, 17 blend modes, reordering, renaming,
   duplication, merge down, flatten, and one level of layer folders that layers
   can be dragged into and out of.
 * Lock transparent pixels on a layer: paint then only recolours the pixels that
   are already there, so a line drawing can be coloured without spilling. The
   eraser also does nothing on a locked layer, because its alpha is frozen.
+* Clip a layer to the one below it (alpha inheritance): the layer keeps its
+  colours, opacity and blend mode but can only show where the layer underneath
+  has paint, so a multiply shadow stays inside the flat colour it belongs to.
 * Selections: rectangular marquee, freehand lasso and magic wand (colour
   tolerance), with feathering, grow / shrink, invert, and a Quick mask view
   that you can paint into with the brush and erase out of with the eraser.

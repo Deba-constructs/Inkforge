@@ -13,7 +13,7 @@ use crate::egui::Color32;
 use crate::engine::{PixelRegion, Surface};
 
 use super::group::{Group, GroupProps};
-use super::layer::{composite_pixel, Layer, LayerId, LayerProps};
+use super::layer::{composite_pixel, composite_pixel_masked, Layer, LayerId, LayerProps};
 
 /// One row of the stack: a paint layer or a group of layers.
 #[derive(Clone, Debug)]
@@ -730,28 +730,41 @@ impl LayerStack {
         let mut index = 0;
         while index < self.entries.len() {
             match &self.entries[index] {
-                Entry::Layer(layer) => {
-                    // Children are drawn through their group below.
-                    if layer.group().is_none() {
-                        composite_entry(layer, 1.0, region, &mut buffer);
+                Entry::Layer(_) => {
+                    // A run of top-level layers; children are drawn through
+                    // their group below.
+                    let start = index;
+                    while index < self.entries.len()
+                        && self.entries[index]
+                            .as_layer()
+                            .is_some_and(|layer| layer.group().is_none())
+                    {
+                        index += 1;
                     }
-                    index += 1;
+                    if index == start {
+                        // A layer that belongs to a group but has no group row
+                        // above it (a damaged file): draw it on its own rather
+                        // than dropping the artist's paint.
+                        let entry = &self.entries[index..=index];
+                        composite_run(entry, 1.0, region, &mut buffer);
+                        index += 1;
+                    } else {
+                        composite_run(&self.entries[start..index], 1.0, region, &mut buffer);
+                    }
                 }
                 Entry::Group(group) => {
                     let group_id = group.id();
-                    let visible = group.visible();
-                    let inherited = group.opacity();
-                    index += 1;
-
-                    while let Some(Entry::Layer(layer)) = self.entries.get(index) {
-                        if layer.group() != Some(group_id) {
-                            break;
-                        }
-                        if visible {
-                            composite_entry(layer, inherited, region, &mut buffer);
-                        }
+                    let inherited = if group.visible() { group.opacity() } else { 0.0 };
+                    let start = index + 1;
+                    index = start;
+                    while index < self.entries.len()
+                        && self.entries[index]
+                            .as_layer()
+                            .is_some_and(|layer| layer.group() == Some(group_id))
+                    {
                         index += 1;
                     }
+                    composite_run(&self.entries[start..index], inherited, region, &mut buffer);
                 }
             }
         }
@@ -791,6 +804,77 @@ fn composite_entry(
             }
             let index = row as usize * region.width as usize + col as usize;
             buffer[index] = composite_pixel(buffer[index], src, mode, opacity);
+        }
+    }
+}
+
+/// Composite a run of sibling layers in order, honouring clipping.
+///
+/// A clipped layer inherits the alpha coverage of the layer directly below it:
+/// it keeps its own colour, opacity and blend mode, but only shows where the
+/// base has paint. Hiding the base hides its clipped children too, and several
+/// clipped layers in a row all inherit from the same base — Clip Studio Paint's
+/// alpha inheritance.
+fn composite_run(
+    layers: &[Entry],
+    inherited_opacity: f32,
+    region: PixelRegion,
+    buffer: &mut [Color32],
+) {
+    let mut base: Option<&Surface> = None;
+    let mut base_visible = false;
+
+    for entry in layers {
+        let Some(layer) = entry.as_layer() else {
+            continue;
+        };
+        if layer.clip_to_below() {
+            // Nothing below to inherit from means nothing to draw.
+            let Some(base) = base else {
+                continue;
+            };
+            if !base_visible {
+                continue;
+            }
+            composite_entry_masked(layer, base, inherited_opacity, region, buffer);
+        } else {
+            base = Some(layer.surface());
+            base_visible = layer.visible();
+            composite_entry(layer, inherited_opacity, region, buffer);
+        }
+    }
+}
+
+/// Composite one clipped layer, masked by the alpha of the layer it clips to.
+fn composite_entry_masked(
+    layer: &Layer,
+    base: &Surface,
+    inherited_opacity: f32,
+    region: PixelRegion,
+    buffer: &mut [Color32],
+) {
+    if !layer.visible() || layer.opacity() <= 0.0 || inherited_opacity <= 0.0 {
+        return;
+    }
+
+    let opacity = layer.opacity() * inherited_opacity;
+    let mode = layer.blend();
+    let surface = layer.surface();
+
+    for row in 0..region.height {
+        let y = region.y + row;
+        for col in 0..region.width {
+            let x = region.x + col;
+            let src = surface.pixel(x, y);
+            if src.a() == 0 {
+                continue;
+            }
+            let mask = base.pixel(x, y).a() as f32 / 255.0;
+            if mask <= 0.0 {
+                continue;
+            }
+            let index = row as usize * region.width as usize + col as usize;
+            buffer[index] = composite_pixel_masked(buffer[index], src, mode, opacity, mask);
         }
     }
 }

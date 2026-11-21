@@ -1355,6 +1355,18 @@ impl InkforgeApp {
         });
     }
 
+    /// Clip a layer to the alpha of the layer below it (Clip Studio Paint's
+    /// "Clip to layer below", Krita's alpha inheritance).
+    ///
+    /// A compositing property, not a pixel edit: the layer keeps every pixel,
+    /// its opacity and its blend mode, and simply cannot show where the base
+    /// layer has no paint. Undoes in one step like any other property.
+    pub fn set_layer_clip(&mut self, id: LayerId, clip: bool) {
+        self.update_layer_props(id, "clip to layer below", |props| {
+            props.clip_to_below = clip
+        });
+    }
+
     pub fn set_group_visibility(&mut self, id: LayerId, visible: bool) {
         self.update_group_props(id, "group visibility", |props| props.visible = visible);
     }

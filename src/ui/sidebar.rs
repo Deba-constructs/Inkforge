@@ -1200,6 +1200,18 @@ fn layer_properties(app: &mut InkforgeApp, ui: &mut egui::Ui) {
     {
         app.set_layer_alpha_lock(id, locked);
     }
+
+    let mut clipped = props.clip_to_below;
+    if ui
+        .checkbox(&mut clipped, RichText::new("Clip to layer below").size(11.5))
+        .on_hover_text(
+            "Alpha inheritance: this layer keeps its colours, opacity and blend mode \
+             but can only show where the layer underneath has paint",
+        )
+        .changed()
+    {
+        app.set_layer_clip(id, clipped);
+    }
 }
 
 /// Name and opacity of the active group.

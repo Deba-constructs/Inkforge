@@ -15,7 +15,7 @@ INKFORGE is built milestone by milestone. This repository currently contains
 **Milestones 1 to 6 plus most of Milestone 7**: the full editor workspace, a working painting engine
 (freehand strokes with real colour, size, opacity, hardness, spacing, grain and
 speed-adaptive stabilisation), an eraser, an eyedropper, six built-in brush
-presets, a real layer stack with groups, visibility, opacity, reordering, blending and a per-layer transparency lock, rectangle, freehand and magic-wand selections with feathering that clip
+presets, a real layer stack with groups, visibility, opacity, reordering, 17 blending modes, clipping to the layer below and a per-layer transparency lock, rectangle, freehand and magic-wand selections with feathering that clip
 every edit, a flood fill, line / rectangle / ellipse shapes, undo/redo covering all of
 it, and real file I/O: `.inkforge` projects that keep every layer, plus PNG and
 JPEG opening, importing and export, a window title that tracks the document and
@@ -39,7 +39,7 @@ portable Windows executable and packaged as a downloadable ZIP (see
 | Drawing tablet: pen pressure drives dab width and opacity, tilt fans the tip out, with three amounts in the sidebar | Working in the Windows build, and the mapping from a reading to a dab is covered by tests; the tablet path itself has not been tried with a real pen (see [DEVELOPMENT.md](DEVELOPMENT.md) limitations) |
 | Eyedropper | Working (samples the artwork, falls back to the canvas background) |
 | Undo / redo of strokes, erases and layer changes (`Ctrl+Z`, `Ctrl+Y`, `Ctrl+Shift+Z`) | Working; history is capped at 256 MB, drops the oldest edits, and moves layers between the document and history instead of copying them |
-| Layers: add, delete, reorder (buttons or dragging rows), duplicate, merge down, flatten, rename (double-click a row), show/hide, opacity, five blend modes and Lock transparent pixels | Working; rows show a live thumbnail (and a padlock when locked), painting always lands on the selected layer and strokes are clipped to it, and on a locked layer paint only recolours pixels that already exist — the eraser cannot take paint away |
+| Layers: add, delete, reorder (buttons or dragging rows), duplicate, merge down, flatten, rename (double-click a row), show/hide, opacity, 17 blend modes, Clip to layer below and Lock transparent pixels | Working; rows show a live thumbnail (and a padlock when locked), painting always lands on the selected layer and strokes are clipped to it, and on a locked layer paint only recolours pixels that already exist — the eraser cannot take paint away |
 | Layer groups: group a layer, add more layers into it, collapse/expand, double-click to rename, group visibility and opacity | Working; group opacity and visibility apply to every layer inside, an empty folder shows where to drag a layer, and painting needs a layer selected rather than the group |
 | Drag layers into and out of groups | Working; drop a layer on a folder row to put it inside, or on a top-level row to take it out, and the move (position and group) undoes in one step |
 | Selection: rectangular marquee, freehand lasso and magic wand (tolerance slider) with optional feathering, grow / shrink by dragging a slider, invert, Quick mask view, dashed outline, select all, deselect | Working; painting, erasing, filling and shapes are all clipped to the selection, soft edges included; the wand selects the connected area of similar colour under the click and outlines its real boundary, and dragging the live Grow / shrink slider moves the selection edge (right grows, left shrinks) and Invert selects everything outside the current selection, all without touching the artwork; the partly-selected part of a feathered edge is tinted on the canvas so you can see how soft it is while you paint, and Quick mask washes the whole selected area in translucent red and is editable: with it on, the brush paints into the selection and the eraser takes parts of it away, including outside the old selection |
@@ -70,7 +70,8 @@ These are the gaps, and the table above does not paper over them:
 
 * **No image transform.** A layer or selection cannot be scaled, flipped,
   skewed or rotated as artwork — canvas rotation turns the view, not the paint.
-* **No layer masks and no clipping masks.**
+* **No layer masks.** Clipping to the layer below works, but there are no
+  greyscale layer or group masks and no adjustment layers yet.
 * **The Windows executable is unsigned**, so SmartScreen warns the first time it
   runs. Choose *More info ▸ Run anyway*, or build it yourself.
 * **The pen path has not met a real tablet.** Pressure and tilt are implemented
