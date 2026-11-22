@@ -36,7 +36,9 @@ pub use fill::FillMask;
 pub use pyramid::{TilePyramid, TILE};
 pub use renderer::ThumbnailCache;
 pub use resize::Anchor;
-pub use selection::{Clip, Selection, SelectionMode, SoftSpan, MAX_FEATHER, MAX_GROW};
+pub use selection::{
+    Clip, Selection, SelectionCombine, SelectionMode, SoftSpan, MAX_FEATHER, MAX_GROW,
+};
 pub use shape::{shape_path, ShapeKind};
 pub use surface::{segment_bounds, PixelRegion, Surface};
 pub use transform::Transform;

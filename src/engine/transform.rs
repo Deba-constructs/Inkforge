@@ -83,6 +83,21 @@ impl Transform {
         }
     }
 
+    /// Destination pixel for source `(x, y)` of a `width × height` image.
+    ///
+    /// The exact inverse of [`Self::source_pixel`], used when something
+    /// described in canvas coordinates — a selection, for instance — has to
+    /// travel with the artwork.
+    pub fn forward_pixel(self, x: u32, y: u32, width: u32, height: u32) -> (u32, u32) {
+        match self {
+            Self::FlipHorizontal => (width - 1 - x, y),
+            Self::FlipVertical => (x, height - 1 - y),
+            Self::Rotate180 => (width - 1 - x, height - 1 - y),
+            // The destination is `height` wide after a quarter turn.
+            Self::Rotate90Cw => (height - 1 - y, x),
+            Self::Rotate90Ccw => (y, width - 1 - x),
+        }
+    }
 }
 
 
@@ -117,6 +132,29 @@ mod tests {
                 seen.iter().all(|hit| *hit),
                 "{transform:?} left some source pixels unread, so it is not a permutation"
             );
+        }
+    }
+
+    #[test]
+    fn forward_and_source_mapping_are_inverses() {
+        let (width, height) = (5, 3);
+        for transform in Transform::ALL {
+            let (out_width, out_height) = transform.output_size(width, height);
+            for y in 0..height {
+                for x in 0..width {
+                    let (dx, dy) = transform.forward_pixel(x, y, width, height);
+                    assert!(
+                        dx < out_width && dy < out_height,
+                        "{transform:?} sent ({x}, {y}) outside the output"
+                    );
+                    let (sx, sy) = transform.source_pixel(dx, dy, width, height);
+                    assert_eq!(
+                        (sx, sy),
+                        (x, y),
+                        "{transform:?} did not round-trip ({x}, {y})"
+                    );
+                }
+            }
         }
     }
 

@@ -620,6 +620,21 @@ fn handle_input(app: &mut InkforgeApp, ui: &egui::Ui, response: &egui::Response,
 fn paint_input(app: &mut InkforgeApp, ui: &egui::Ui, response: &egui::Response, view: Rect) {
     let doc = app.canvas.size_vec();
 
+    // A polygon lasso is keyboard-finishable: Enter closes it, Escape drops it.
+    if app.polygon_in_progress() {
+        let (enter, escape) = ui.input(|input| {
+            (
+                input.key_pressed(egui::Key::Enter),
+                input.key_pressed(egui::Key::Escape),
+            )
+        });
+        if escape {
+            app.cancel_polygon();
+        } else if enter {
+            app.finish_polygon();
+        }
+    }
+
     // A click without a drag stamps, picks or fills.
     if response.clicked() {
         if let Some(pointer) = response.interact_pointer_pos() {
@@ -635,6 +650,15 @@ fn paint_input(app: &mut InkforgeApp, ui: &egui::Ui, response: &egui::Response, 
                         app.end_selection_drag();
                     }
                     crate::engine::SelectionMode::Lasso => app.deselect(),
+                    crate::engine::SelectionMode::Polygon => {
+                        // The second click of a double-click closes the shape
+                        // instead of adding a stray corner.
+                        if response.double_clicked() {
+                            app.finish_polygon();
+                        } else {
+                            app.add_polygon_point(canvas_pos);
+                        }
+                    }
                     crate::engine::SelectionMode::MagicWand => app.wand_at(canvas_pos),
                 },
                 Tool::Shape | Tool::Hand => {}
@@ -657,9 +681,11 @@ fn paint_input(app: &mut InkforgeApp, ui: &egui::Ui, response: &egui::Response, 
                 Tool::Selection => match app.selection_mode {
                     crate::engine::SelectionMode::Rectangle => app.begin_selection_drag(canvas_pos),
                     crate::engine::SelectionMode::Lasso => app.begin_lasso(canvas_pos),
-                    // The wand is click-only: a drag across the canvas is not a
-                    // region, so it neither selects nor clears.
-                    crate::engine::SelectionMode::MagicWand => {}
+                    // The polygon lasso and the wand are click-only: a drag
+                    // across the canvas is not a region, so they neither
+                    // select nor clear.
+                    crate::engine::SelectionMode::Polygon
+                    | crate::engine::SelectionMode::MagicWand => {}
                 },
                 Tool::Shape => app.begin_shape_drag(canvas_pos),
                 Tool::Eyedropper | Tool::Fill | Tool::Hand => {}
@@ -677,7 +703,8 @@ fn paint_input(app: &mut InkforgeApp, ui: &egui::Ui, response: &egui::Response, 
                         app.update_selection_drag(canvas_pos)
                     }
                     crate::engine::SelectionMode::Lasso => app.extend_lasso(canvas_pos),
-                    crate::engine::SelectionMode::MagicWand => {}
+                    crate::engine::SelectionMode::Polygon
+                    | crate::engine::SelectionMode::MagicWand => {}
                 },
                 Tool::Shape => app.update_shape_drag(canvas_pos),
                 Tool::Eyedropper | Tool::Fill | Tool::Hand => {}
@@ -691,7 +718,8 @@ fn paint_input(app: &mut InkforgeApp, ui: &egui::Ui, response: &egui::Response, 
             Tool::Selection => match app.selection_mode {
                 crate::engine::SelectionMode::Rectangle => app.end_selection_drag(),
                 crate::engine::SelectionMode::Lasso => app.end_lasso(),
-                crate::engine::SelectionMode::MagicWand => {}
+                crate::engine::SelectionMode::Polygon
+                | crate::engine::SelectionMode::MagicWand => {}
             },
             Tool::Shape => app.commit_shape(),
             _ => {}
@@ -710,6 +738,8 @@ fn paint_input(app: &mut InkforgeApp, ui: &egui::Ui, response: &egui::Response, 
         if app.lasso_points.is_some() {
             app.end_lasso();
         }
+        // A polygon lasso deliberately survives the mouse button coming up:
+        // it is drawn click by click, not by dragging.
         if app.shape_drag.is_some() {
             app.commit_shape();
         }
@@ -767,6 +797,14 @@ fn draw_overlays(app: &InkforgeApp, painter: &Painter, page_view: &PageView) {
 
     let points = if let Some(points) = &app.lasso_points {
         Some(points.clone())
+    } else if let Some(points) = &app.selection_polygon {
+        // A rubber band to the pointer is what makes the steps clickable,
+        // otherwise only the corners drawn so far would be visible.
+        let mut path = points.clone();
+        if let Some(hover) = painter.ctx().pointer_hover_pos() {
+            path.push(page_view.unpoint(hover));
+        }
+        Some(path)
     } else if let Some((start, end)) = app.selection_drag {
         Some(vec![
             start,

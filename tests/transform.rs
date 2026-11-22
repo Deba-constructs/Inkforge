@@ -143,16 +143,24 @@ fn every_transform_is_undone_by_its_inverse() {
 }
 
 #[test]
-fn a_transform_clears_the_selection() {
+fn a_transform_carries_the_selection_with_the_artwork() {
     let mut canvas = canvas_with(16, 16);
     canvas.select_all();
     assert!(canvas.selection().is_some());
 
     canvas.transform(Transform::Rotate90Cw);
-    assert!(
-        canvas.selection().is_none(),
-        "an old-coordinate selection must not survive a turn"
-    );
+    let turned = canvas
+        .selection()
+        .expect("a whole-canvas selection must still cover the turned page");
+    assert_eq!(turned.bounds().width, 16, "the box came across the turn");
+    assert_eq!(turned.bounds().height, 16);
+    assert!(turned.contains(0, 0) && turned.contains(15, 15));
+
+    // Undo applies the inverse transform, which brings the selection back too.
+    canvas.transform(Transform::Rotate90Ccw);
+    let back = canvas.selection().expect("the selection came back");
+    assert_eq!(back.bounds().width, 16);
+    assert!(back.contains(0, 0));
 }
 
 #[test]

@@ -11,8 +11,8 @@ use inkforge::egui::{Color32, Context, Key, Modifiers, Pos2, ViewportCommand};
 
 use crate::engine::{
     validate_canvas_size, Anchor, Background, BrushDab, BrushSettings, Canvas, PenSample,
-    PenSettings, PixelRegion, Selection, SelectionMode, ShapeKind, Stabilizer, ThumbnailCache,
-    TilePyramid, Viewport, DEFAULT_DPI, MAX_FEATHER,
+    PenSettings, PixelRegion, Selection, SelectionCombine, SelectionMode, ShapeKind, Stabilizer,
+    ThumbnailCache, TilePyramid, Viewport, DEFAULT_DPI, MAX_FEATHER,
 };
 use crate::history::{Edit, History, Recorder};
 use crate::io::{
@@ -387,12 +387,16 @@ pub struct InkforgeApp {
     grow_base: Option<Selection>,
     /// Selection drag in progress, in canvas coordinates (start, current).
     pub selection_drag: Option<(Pos2, Pos2)>,
-    /// Rectangle marquee or freehand lasso.
+    /// Rectangle marquee, freehand lasso, polygon lasso or magic wand.
     pub selection_mode: SelectionMode,
+    /// How a new selection joins the one already there.
+    pub selection_combine: SelectionCombine,
     /// Feather radius applied to new selections, in pixels.
     pub feather: f32,
     /// Lasso path in progress, in canvas coordinates.
     pub lasso_points: Option<Vec<Pos2>>,
+    /// Polygon lasso corners placed so far, in canvas coordinates.
+    pub selection_polygon: Option<Vec<Pos2>>,
     /// Shape drag in progress, in canvas coordinates (start, current).
     pub shape_drag: Option<(Pos2, Pos2)>,
     /// Active stroke, while the pointer is down on the canvas.
@@ -488,8 +492,10 @@ impl InkforgeApp {
             grow_base: None,
             selection_drag: None,
             selection_mode: SelectionMode::default(),
+            selection_combine: SelectionCombine::default(),
             feather: 0.0,
             lasso_points: None,
+            selection_polygon: None,
             shape_drag: None,
             stroke: None,
             mask_stroke: None,
@@ -581,6 +587,7 @@ impl InkforgeApp {
         self.end_stroke();
         self.selection_drag = None;
         self.lasso_points = None;
+        self.selection_polygon = None;
         self.shape_drag = None;
         self.tool = tool;
         if tool.is_active() {
@@ -1576,6 +1583,7 @@ impl InkforgeApp {
         self.recorder = None;
         self.selection_drag = None;
         self.lasso_points = None;
+        self.selection_polygon = None;
         self.shape_drag = None;
         self.edit_mask = false;
         self.history.clear();
@@ -2250,6 +2258,71 @@ impl InkforgeApp {
         self.history.push(Edit::selection(before, selection));
     }
 
+    /// How new selections combine with the existing one (replace, add,
+    /// subtract or intersect).
+    ///
+    /// With a combine mode other than "New", finishing a selection never clears
+    /// what was there: the two are merged per pixel instead.
+    pub fn set_selection_combine(&mut self, combine: SelectionCombine) {
+        self.selection_combine = combine;
+        self.set_status(format!(
+            "New selections will {}.",
+            combine.description()
+        ));
+    }
+
+    /// Apply a freshly drawn selection under the current combine mode.
+    ///
+    /// This is the single entry point for the rectangle, both lassos and the
+    /// wand, so "add", "subtract" and "intersect" behave the same whichever
+    /// tool drew the shape.
+    pub fn apply_selection(&mut self, selection: Option<Selection>) {
+        let Some(selection) = selection else {
+            if self.selection_combine == SelectionCombine::Replace {
+                self.set_selection(None);
+                self.set_status("Selection cleared.");
+            } else {
+                self.set_status(format!(
+                    "Nothing was enclosed — the selection was left alone to {}.",
+                    self.selection_combine.description()
+                ));
+            }
+            return;
+        };
+
+        let mode = self.selection_combine;
+        let current = self.canvas.selection().cloned();
+        let Some(current) = current else {
+            if mode == SelectionCombine::Replace || mode == SelectionCombine::Add {
+                let label = selection.label();
+                self.set_selection(Some(selection));
+                self.set_status(format!("Selection: {label}"));
+            } else {
+                self.set_status(format!(
+                    "Nothing is selected to {} from — draw a selection first.",
+                    if mode == SelectionCombine::Subtract {
+                        "subtract"
+                    } else {
+                        "intersect"
+                    }
+                ));
+            }
+            return;
+        };
+
+        match current.combined(&selection, mode) {
+            Some(combined) => {
+                let label = combined.label();
+                self.set_selection(Some(combined));
+                self.set_status(format!("Selection ({}) — {label}", mode.label()));
+            }
+            None => {
+                self.set_selection(None);
+                self.set_status("Nothing was left selected — selection cleared.");
+            }
+        }
+    }
+
     /// Begin dragging a rectangular selection.
     pub fn begin_selection_drag(&mut self, at: Pos2) {
         self.end_stroke();
@@ -2268,22 +2341,14 @@ impl InkforgeApp {
             return;
         };
 
-        match Selection::rectangle(
+        let selection = Selection::rectangle(
             start,
             end,
             self.canvas.width(),
             self.canvas.height(),
             self.feather,
-        ) {
-            Some(selection) => {
-                self.set_status(format!("Selection: {}", selection.label()));
-                self.set_selection(Some(selection));
-            }
-            None => {
-                self.set_selection(None);
-                self.set_status("Selection cleared.");
-            }
-        }
+        );
+        self.apply_selection(selection);
     }
 
     /// Start a freehand lasso.
@@ -2313,33 +2378,89 @@ impl InkforgeApp {
             return;
         };
 
-        match Selection::lasso(&points, self.canvas.width(), self.canvas.height(), self.feather)
-        {
-            Some(selection) => {
-                self.set_status(format!("Selection: {}", selection.label()));
-                self.set_selection(Some(selection));
-            }
+        let selection = Selection::lasso(
+            &points,
+            self.canvas.width(),
+            self.canvas.height(),
+            self.feather,
+        );
+        self.apply_selection(selection);
+    }
+
+    /// Place one corner of the polygon lasso, starting it when needed.
+    ///
+    /// Clicking near the first corner closes the polygon, which is the way most
+    /// painters finish one; a double-click on the canvas does the same.
+    pub fn add_polygon_point(&mut self, at: Pos2) {
+        match self.selection_polygon.as_ref() {
             None => {
-                self.set_selection(None);
-                self.set_status("The lasso enclosed no area — selection cleared.");
+                self.end_stroke();
+                self.selection_polygon = Some(vec![at]);
+                self.set_status(
+                    "Polygon lasso: click each corner, then click the first corner (or press \
+                     Enter) to close it. Escape cancels.",
+                );
+            }
+            Some(points)
+                if points.len() >= 3
+                    && points
+                        .first()
+                        .is_some_and(|first| (at - *first).length() <= 2.0) =>
+            {
+                self.finish_polygon();
+            }
+            Some(points) if points.len() >= 4096 => {
+                self.set_status("That is as many corners as a polygon can hold — close it to continue.");
+            }
+            Some(_) => {
+                if let Some(points) = self.selection_polygon.as_mut() {
+                    points.push(at);
+                }
             }
         }
+    }
+
+    /// Close the polygon lasso into a selection, combined however the sidebar
+    /// says. Fewer than three corners is not a shape, so nothing changes.
+    pub fn finish_polygon(&mut self) {
+        let Some(points) = self.selection_polygon.take() else {
+            return;
+        };
+        if points.len() < 3 {
+            self.set_status("A polygon needs at least three corners — nothing was selected.");
+            return;
+        }
+
+        let selection = Selection::lasso(
+            &points,
+            self.canvas.width(),
+            self.canvas.height(),
+            self.feather,
+        );
+        self.apply_selection(selection);
+    }
+
+    /// Throw away a half-drawn polygon lasso without touching the selection.
+    pub fn cancel_polygon(&mut self) {
+        if self.selection_polygon.take().is_some() {
+            self.set_status("Polygon lasso cancelled.");
+        }
+    }
+
+    /// True while a polygon lasso is being drawn (its corners are on screen).
+    pub fn polygon_in_progress(&self) -> bool {
+        self.selection_polygon.is_some()
     }
 
     /// Magic wand: select the connected area of similar colour clicked on.
     pub fn wand_at(&mut self, at: Pos2) {
         self.end_stroke();
 
-        match self.canvas.wand_selection_at(at, self.wand_tolerance, self.feather) {
-            Some(selection) => {
-                self.set_status(format!("Selection: {}", selection.label()));
-                self.set_selection(Some(selection));
-            }
-            None => {
-                self.set_selection(None);
-                self.set_status("Nothing similar there — selection cleared.");
-            }
+        let selection = self.canvas.wand_selection_at(at, self.wand_tolerance, self.feather);
+        if selection.is_none() && self.selection_combine == SelectionCombine::Replace {
+            self.set_status("Nothing similar there — selection cleared.");
         }
+        self.apply_selection(selection);
     }
 
     pub fn set_wand_tolerance(&mut self, tolerance: u8) {
@@ -2453,6 +2574,9 @@ impl InkforgeApp {
 
 
     pub fn set_selection_mode(&mut self, mode: SelectionMode) {
+        self.selection_drag = None;
+        self.lasso_points = None;
+        self.selection_polygon = None;
         self.selection_mode = mode;
         self.set_status(format!("Selection tool: {}", mode.label()));
     }
@@ -2467,11 +2591,13 @@ impl InkforgeApp {
 
     pub fn select_all(&mut self) {
         let (width, height) = (self.canvas.width(), self.canvas.height());
+        self.selection_polygon = None;
         self.set_selection(Some(Selection::whole(width, height)));
         self.set_status("Selected the whole canvas");
     }
 
     pub fn deselect(&mut self) {
+        self.selection_polygon = None;
         self.set_selection(None);
         self.set_status("Selection cleared.");
     }

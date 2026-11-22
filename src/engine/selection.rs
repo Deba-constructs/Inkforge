@@ -20,16 +20,19 @@ use super::{FillMask, PixelRegion};
 pub enum SelectionMode {
     Rectangle,
     Lasso,
+    /// Straight-edged lasso: click each corner, close on the first one.
+    Polygon,
     MagicWand,
 }
 
 impl SelectionMode {
-    pub const ALL: [Self; 3] = [Self::Rectangle, Self::Lasso, Self::MagicWand];
+    pub const ALL: [Self; 4] = [Self::Rectangle, Self::Lasso, Self::Polygon, Self::MagicWand];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Rectangle => "Rectangle",
             Self::Lasso => "Lasso",
+            Self::Polygon => "Polygon",
             Self::MagicWand => "Magic wand",
         }
     }
@@ -46,6 +49,46 @@ pub const MAX_FEATHER: f32 = 40.0;
 
 /// Largest grow or shrink step offered, in pixels.
 pub const MAX_GROW: u8 = 32;
+
+/// How a newly drawn selection is combined with the one already there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectionCombine {
+    Replace,
+    Add,
+    Subtract,
+    Intersect,
+}
+
+impl SelectionCombine {
+    /// Every mode, in the order the sidebar lists them.
+    pub const ALL: [Self; 4] = [Self::Replace, Self::Add, Self::Subtract, Self::Intersect];
+
+    /// Button wording.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Replace => "New",
+            Self::Add => "Add",
+            Self::Subtract => "Subtract",
+            Self::Intersect => "Intersect",
+        }
+    }
+
+    /// Full sentence used in the status line and tooltips.
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Replace => "replace the selection",
+            Self::Add => "add to the selection",
+            Self::Subtract => "subtract from the selection",
+            Self::Intersect => "keep only what is selected twice",
+        }
+    }
+}
+
+impl Default for SelectionCombine {
+    fn default() -> Self {
+        Self::Replace
+    }
+}
 
 /// Shape of the selection, for drawing its outline.
 #[derive(Clone, Debug)]
@@ -371,6 +414,167 @@ impl Selection {
             bounds,
             outline,
             mask: Some(mask),
+            soft,
+            preview: OnceCell::new(),
+        })
+    }
+
+    /// Combine this selection with `other` under one of the four modes.
+    ///
+    /// Coverage is combined per pixel, so feathered edges meet softly instead
+    /// of being clipped: addition takes the greater coverage, subtraction
+    /// scales this selection down by `other`'s coverage, and intersection
+    /// multiplies the two. The result is trimmed to the pixels that survive,
+    /// and returns `None` when nothing is left (subtracting everything collapses
+    /// the selection, exactly like shrinking it away).
+    pub fn combined(&self, other: &Self, mode: SelectionCombine) -> Option<Self> {
+        if mode == SelectionCombine::Replace {
+            return Some(other.clone());
+        }
+
+        let x = self.bounds.x.min(other.bounds.x);
+        let y = self.bounds.y.min(other.bounds.y);
+        let right = (self.bounds.x + self.bounds.width)
+            .max(other.bounds.x + other.bounds.width);
+        let bottom = (self.bounds.y + self.bounds.height)
+            .max(other.bounds.y + other.bounds.height);
+        let union = PixelRegion {
+            x,
+            y,
+            width: right.saturating_sub(x),
+            height: bottom.saturating_sub(y),
+        };
+        if union.is_empty() {
+            return None;
+        }
+
+        let width = union.width as usize;
+        let mut values = vec![0u8; union.pixel_count()];
+        for row in 0..union.height {
+            for col in 0..union.width {
+                let (px, py) = (union.x + col, union.y + row);
+                let a = (self.coverage(px, py) * 255.0).round() as u32;
+                let b = (other.coverage(px, py) * 255.0).round() as u32;
+                let value = match mode {
+                    SelectionCombine::Add => a.max(b),
+                    SelectionCombine::Subtract => a * (255 - b) / 255,
+                    SelectionCombine::Intersect => a * b / 255,
+                    SelectionCombine::Replace => b,
+                };
+                values[row as usize * width + col as usize] = value.min(255) as u8;
+            }
+        }
+
+        // Trim to the surviving pixels, so painting only touches affected tiles.
+        let (mut min_x, mut min_y, mut max_x, mut max_y) = (union.width, union.height, 0, 0);
+        let mut any = false;
+        for row in 0..union.height {
+            for col in 0..union.width {
+                if values[row as usize * width + col as usize] == 0 {
+                    continue;
+                }
+                any = true;
+                min_x = min_x.min(col);
+                min_y = min_y.min(row);
+                max_x = max_x.max(col);
+                max_y = max_y.max(row);
+            }
+        }
+        if !any {
+            return None;
+        }
+
+        let bounds = PixelRegion {
+            x: union.x + min_x,
+            y: union.y + min_y,
+            width: max_x - min_x + 1,
+            height: max_y - min_y + 1,
+        };
+        let mut mask = Vec::with_capacity(bounds.pixel_count());
+        for row in min_y..=max_y {
+            let start = row as usize * width + min_x as usize;
+            mask.extend_from_slice(&values[start..start + bounds.width as usize]);
+        }
+
+        let outline = coverage_outline(&mask, bounds);
+        let soft = soft_spans(&mask, bounds);
+        Some(Self {
+            bounds,
+            mask: Some(mask),
+            outline,
+            soft,
+            preview: OnceCell::new(),
+        })
+    }
+
+    /// The same selection on a flipped or turned page.
+    ///
+    /// `width` and `height` are the document size the selection belongs to; the
+    /// result is described in the transformed document's coordinates. Coverage
+    /// moves with the pixels, so a feathered edge survives the turn, and a
+    /// selection that would land entirely off the page returns `None`.
+    pub fn transformed(
+        &self,
+        transform: super::Transform,
+        width: u32,
+        height: u32,
+    ) -> Option<Self> {
+        if width == 0 || height == 0 {
+            return None;
+        }
+
+        // The bounding box is a rectangle, so its four corner *pixels* are
+        // enough to find where the whole selection lands. The last pixel is
+        // `x + width - 1`, not `x + width`, or the far edge would be cropped.
+        let last_x = self.bounds.x + self.bounds.width.saturating_sub(1);
+        let last_y = self.bounds.y + self.bounds.height.saturating_sub(1);
+        let corners = [
+            (self.bounds.x, self.bounds.y),
+            (last_x, self.bounds.y),
+            (last_x, last_y),
+            (self.bounds.x, last_y),
+        ];
+        let (mut min_x, mut min_y) = (u32::MAX, u32::MAX);
+        let (mut max_x, mut max_y) = (0u32, 0u32);
+        for (x, y) in corners {
+            let (dx, dy) = transform.forward_pixel(x, y, width, height);
+            min_x = min_x.min(dx);
+            min_y = min_y.min(dy);
+            max_x = max_x.max(dx);
+            max_y = max_y.max(dy);
+        }
+
+        let (out_width, out_height) = transform.output_size(width, height);
+        let bounds = PixelRegion {
+            x: min_x,
+            y: min_y,
+            width: (max_x - min_x + 1).min(out_width.saturating_sub(min_x)),
+            height: (max_y - min_y + 1).min(out_height.saturating_sub(min_y)),
+        };
+        if bounds.is_empty() {
+            return None;
+        }
+
+        let mut mask = Vec::with_capacity(bounds.pixel_count());
+        let mut any = false;
+        for row in 0..bounds.height {
+            for col in 0..bounds.width {
+                let (sx, sy) = transform.source_pixel(bounds.x + col, bounds.y + row, width, height);
+                let value = (self.coverage(sx, sy) * 255.0).round() as u8;
+                any |= value > 0;
+                mask.push(value);
+            }
+        }
+        if !any {
+            return None;
+        }
+
+        let outline = coverage_outline(&mask, bounds);
+        let soft = soft_spans(&mask, bounds);
+        Some(Self {
+            bounds,
+            mask: Some(mask),
+            outline,
             soft,
             preview: OnceCell::new(),
         })

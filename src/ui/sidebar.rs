@@ -10,7 +10,7 @@ use super::{theme, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_WIDTH};
 use crate::app::{InkforgeApp, Tool};
 use crate::engine::{
     presets::{BrushGroup, PRESETS},
-    Background, SelectionMode, ShapeKind, MAX_FEATHER, MAX_GROW,
+    Background, SelectionCombine, SelectionMode, ShapeKind, MAX_FEATHER, MAX_GROW,
 };
 use crate::layers::{Adjustment, BlendMode, Entry, LayerId};
 
@@ -357,6 +357,21 @@ fn tool_options(app: &mut InkforgeApp, ui: &mut egui::Ui) {
                 }
             });
 
+            // How the next selection joins this one. "New" replaces it, which
+            // is what a first selection does.
+            ui.label("Combine with the current selection:");
+            ui.horizontal_wrapped(|ui| {
+                for combine in SelectionCombine::ALL {
+                    if ui
+                        .selectable_label(app.selection_combine == combine, combine.label())
+                        .on_hover_text(format!("Make the next selection {}", combine.description()))
+                        .clicked()
+                    {
+                        app.set_selection_combine(combine);
+                    }
+                }
+            });
+
             if app.selection_mode == SelectionMode::MagicWand {
                 let mut tolerance = app.wand_tolerance as f32;
                 slider_row(ui, "Tolerance", &format!("{tolerance:.0}"));
@@ -419,6 +434,8 @@ fn tool_options(app: &mut InkforgeApp, ui: &mut egui::Ui) {
                 "Quick mask: paint with the brush to add to the selection, the eraser to remove from it. Q turns it off."
             } else if app.selection_mode == SelectionMode::MagicWand {
                 "Click a colour: the connected area of similar colour is selected. Feather softens its edge."
+            } else if app.selection_mode == SelectionMode::Polygon {
+                "Click each corner, then click the first corner or press Enter to close. Escape drops it. Every edit is clipped to the selection."
             } else {
                 "Drag to select; every edit is clipped to the selection. Feather softens the edge."
             };

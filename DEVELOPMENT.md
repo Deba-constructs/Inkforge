@@ -3,13 +3,16 @@
 Living document: environment notes, milestone status, architecture decisions,
 verification log and outstanding work. Updated as milestones land.
 
-Last updated: Milestone 9 — the canvas preset system, print setup and the
-1.5.0 Windows package. Milestone 7 is still open (see §7); 1.1.0 added the full
+Last updated: the 1.6.0 release preparation — polygon lasso, selection combine
+modes, selections that follow a document transform, undoable canvas size/crop.
+Milestone 7 is still open (see §7); 1.1.0 added the full
 W3C blend set and clip to layer below, 1.2.0 added a 43-brush library, live
 per-layer colour adjustments and document flips/rotations, 1.3.0 added
 non-destructive layer masks (project format version 2), 1.4.0 added layered
-OpenRaster (`.ora`) export, and 1.5.0 adds 53 canvas presets, unit-aware sizes,
-print metadata and guides (project format version 3).
+OpenRaster (`.ora`) export, 1.5.0 added 53 canvas presets, unit-aware sizes,
+print metadata and guides (project format version 3), and 1.6.0 makes
+selections undoable and combinable, adds the polygon lasso, canvas size/crop/trim
+after creation, persistent workspace preferences and PNG resolution import.
 
 ---
 
@@ -725,7 +728,23 @@ release is authorised:
   `cargo test --all-targets` on Ubuntu 24.04 with the X11/Wayland libraries.
   Written but never executed: the workflow only runs when the repository is
   pushed, which needs explicit authorisation.
-* **Not done yet** — selection history, canvas size/crop after creation,
+* **Selection combine modes and the polygon lasso (1.6.0)** —
+  `SelectionMode::Polygon` (click corners, close on the first one, Enter or a
+  double-click; Escape cancels) reuses the lasso geometry so the mask maths is
+  shared. `SelectionCombine::{Replace, Add, Subtract, Intersect}` combine two
+  selections per pixel (max, scale-down, multiply), then trim to what survives.
+  Every tool now finishes through `InkforgeApp::apply_selection`, which is what
+  makes "add" behave the same for the marquee, both lassos and the wand.
+* **Selections follow a document transform (item 24)** — `Canvas::transform` now
+  re-describes the selection in the new coordinates via
+  `Selection::transformed`, using `Transform::forward_pixel` (the exact inverse of
+  `source_pixel`, covered by its own test). Because undo applies the inverse
+  transform, the selection comes back with it and no extra history entry is
+  needed. A resize still clears the selection.
+* **Release preparation** — version 1.6.0 in `Cargo.toml`/`Cargo.lock`,
+  `CHANGELOG.md`, `RELEASE-NOTES-1.6.0.md`, `RELEASING.md` and the rebuilt
+  Windows ZIP. Nothing is pushed or published until that is authorised.
+* **Not done yet** — selection save/load, free transform of a layer, filters,
   rulers on a turned canvas, and the rest of the inventory (`REMAINING-WORK.md`
   in the project files).
 
@@ -802,7 +821,7 @@ release is authorised:
 | Partial uploads (headless) | `cargo test --test ui_smoke painting_uploads_only_the_changed_region` | A simulated drag uploads 13 700 of 2 073 600 pixels (0.66% of a 1920 × 1080 canvas) and the uploaded region is marked clean |
 | Presets | `cargo test --test presets` | Defaults match preset 0, all 43 presets round-trip through their settings, every pair paints a measurably distinct mark (ink mass, coverage and a hash of the alpha shape all have to differ, 903 pairs), names and parameter sets are unique, every shelf is populated, spacing changes density, grain varies alpha reproducibly, a clean tip has a uniform core |
 | Colour adjustments | `cargo test --test adjustments` | A neutral adjustment returns pixels untouched; brightness lifts and darkens by the expected amounts; positive contrast pushes a light tone up and full negative contrast flattens to mid-grey; saturation 0 turns red into its Rec. 601 grey and 200% pushes channels apart; hue +120° turns red into green and +240° into blue while grey is left alone; alpha survives; wild and NaN values are clamped; the composite applies the adjustment; resetting restores the exact original composite and leaves the layer's own pixels untouched; a clipped layer keeps its own adjustment; merging down bakes it; one undo returns the layer to neutral and redo restores it; the values survive save/load, and a project written before adjustments existed loads neutral |
-| Document transforms | `cargo test --test transform` | Flip horizontal and vertical map every pixel to its mirror; a quarter turn swaps the document size and the old left column becomes the new top row; every transform is a permutation (each source pixel read exactly once, none left out) and its inverse restores the exact pixels and size; two clockwise turns equal a half turn; clockwise and counter-clockwise cover the same source pixels; a transform clears the selection; every layer of the stack turns with the canvas; rotate → undo → redo through the app restores pixels and size; a turned document saves and reloads with the new dimensions and the same pixels |
+| Document transforms | `cargo test --test transform` | Flip horizontal and vertical map every pixel to its mirror; a quarter turn swaps the document size and the old left column becomes the new top row; every transform is a permutation (each source pixel read exactly once, none left out) and its inverse restores the exact pixels and size; two clockwise turns equal a half turn; clockwise and counter-clockwise cover the same source pixels; forward and inverse pixel mapping round-trip; a transform carries the selection with the artwork and the inverse brings it back; every layer of the stack turns with the canvas; rotate → undo → redo through the app restores pixels and size; a turned document saves and reloads with the new dimensions and the same pixels |
 | Stabiliser | `cargo test --test stabilizer` | 0% is exact, shaky paths are flattened, lag never exceeds the 26 px limit, light smoothing follows closely, a held pointer converges, non-finite input is ignored |
 | Undo/redo | `cargo test --test history` | Stroke undo/redo round trip, undo restoring only the painted area, undoing an erase, redo invalidation, empty edits not recorded, 256 MB-style trimming keeping the newest edit, no-op undo on empty history, a stroke staying on its own layer |
 | Layers and groups | `cargo test --test layers` | Default single layer, add-above-and-select, last-layer protection, reorder changing what composites on top, hide/show, 50% opacity maths, multiply blending, dirty-region composite caching, undoable add/delete, painting landing on the selected layer, duplicate copying pixels and properties, merge down baking both sides as one undo step, merge undo restoring the removed layer and target pixels, merge redo re-applying the pixels, the merge snapshot staying proportional to the merged layer rather than the canvas, undo moving a merged layer rather than copying it, the bottom layer refusing to merge, thumbnails keeping the canvas aspect, flatten baking the visible stack (and its undo/redo), flatten history not retaining a third canvas image, hidden layers being discarded but restored by undo, drag-to-reorder slot maths and a no-op drag adding no history, grouping a layer (and refusal to nest), group visibility and opacity reaching every child, adding a layer into the selected group, deleting a group as one undo step, painting refused while a group is selected, collapse being view-only, slots mapping to the group whose block holds them, dragging a top-level layer into a group (one undo step, undone back to the top level) and dragging a layer out of a group (undo and redo changing its group back and forth) |
@@ -811,6 +830,9 @@ release is authorised:
 | Lock transparent pixels | `cargo test --test locking` | The lock is off on a fresh layer; a locked stroke recolours an existing disc while its alpha stays exactly 255, and leaves no pixel behind where the same stroke crossed transparency; a locked eraser cannot remove paint; a locked fill recolours the covered area and creates nothing outside it; unlocking lets paint reach empty pixels again; a locked shape line stays inside the existing paint; and the flag survives saving and loading a project. The checkbox and padlock have not been looked at — no display here (§8) |
 | Brush rasteriser | `cargo test --test painting` | Stroke continuity along a path, round dab shape, 50% opacity landing ~128 alpha, eraser removing paint, straight-alpha sampling, off-canvas clipping, revision bumps |
 | Selection, fill, shapes | `cargo test --test editing` | Selection normalising and clamping, click-sized drags rejected, painting clipped at the selection edge, select all/clear, fill covering only the matching area, fill clipped to the selection and undoable, fill selection, line/rectangle/ellipse geometry, shapes clipped, selection drag and one-step shape commit through the app, lasso polygon coverage, feather coverage ramps, painting and filling clipped to a lasso, soft edges when painting a feathered selection, a lasso drag through the app, a wand selecting only the connected block it was clicked in (with a boundary outline), its tolerance widening the region to the neighbouring shade at 24 but not at 0, painting following a wand region's shape rather than its bounding box, a feathered wand fading at its edge, the wand mode selecting through the app, growing a rectangle by 4 px on every side and shrinking it back exactly, a 3 × 3 selection shrinking away entirely, growth stopping at the canvas edge, dragging the Grow / shrink slider being relative to the drag's start rather than cumulative, the slider reaching an empty selection and a selection that shrinks away, inverting a rectangle into a canvas-wide hole, feathering surviving an invert, a double invert returning the original, a full-canvas invert leaving nothing, the Invert button through the app, a feathered selection gaining tinted soft-edge spans that stay inside it and skip the fully selected middle, hard selections gaining none, the band surviving both grow and shrink, a hard selection's Quick mask being one solid wash over its bounds, a feathered Quick mask fading to a weaker edge, the wash being cached rather than rebuilt, the Quick mask toggle reporting its state, `Q` toggling the wash through the frame path, brush strokes adding coverage to the mask (inside and outside the old selection, growing its bounds), the eraser removing coverage, a mask stroke leaving every layer pixel untouched and writing no history entry, painting with nothing selected creating a selection, an eraser stroke that clears the last coverage clearing the selection, a painted mask regaining its pixel-edge outline when the stroke ends, and the brush painting the layer again once the Quick mask is off |
+| Selection combine modes, polygon lasso, transformed selections | `cargo test --test selection` | Adding a second rectangle keeps both areas and the gap between them, and one undo restores the first alone; subtracting punches a hole and intersecting keeps only the overlap, trimmed to it; intersecting disjoint areas leaves nothing selected; the polygon lasso closes on its first corner through the app, selects the enclosed area and undoes back to the previous selection; fewer than three corners select nothing and Escape cancels without touching the selection; a quarter turn re-describes the selection in the new coordinates (the old top-left corner ends up top-right), swaps the page size, and undo restores the original bounds; a horizontal flip moves it to the opposite edge; a feathered selection keeps a partial-coverage edge through a half turn |
+| Document size, crop and trim | `cargo test --test document_ops` | Nine anchors place the artwork where the grid says, growing pads with transparency while shrinking crops without resampling, resize keeps every pixel inside the overlap exactly, a crop to a selection keeps only that region, trimming drops a transparent margin, each operation is one undo step through the app, and resolution / bleed / safe area edits reach the document and undo |
+| Workspace preferences | `cargo test --test workspace` | Panel visibility, ruler unit, rulers/grid/guides/print marks and grid spacing survive a restart through `settings.json`, a missing file falls back to defaults, a damaged file is reported once and painting continues, and a read-only folder does not interrupt the session |
 | File I/O | `cargo test --test io` | A project with two layers, a group, a blend mode, opacity, names, group membership and painted pixels round-trips through save/load unchanged; damaged files (bad magic, truncation, a future version, a missing file) are refused with readable messages; an impossible canvas size is rejected; a PNG export reopens as a document with the same pixels; a JPEG export is readable and composites transparency onto white; an imported image becomes a cropped layer above the active one; a text file named `.png` fails cleanly |
 | OpenRaster export | `cargo test --test ora` | An archive with the required layout — `mimetype` first, stored and exact, then `stack.xml`, `mergedimage.png`, `Thumbnails/thumbnail.png` and one `data/layerN.png` per layer — read back by an independent stored-ZIP reader that checks both header sets and every CRC; a 600 × 300 document getting a 256 × 128 thumbnail; layers, groups, names, opacity, visibility and all blend modes reaching `stack.xml` as SVG compositing names with XML-escaped names (`&amp;`, `&quot;`, `&lt;`); the top layer written first; a layer's exported pixels matching its paint; a mask and a live adjustment baked into the exported PNG while the in-memory layer keeps both editable; `mergedimage.png` byte-identical to a PNG export of the same document; a group's opacity and visibility surviving as stack attributes; an unwritable path reported cleanly; and a single-layer document still writing exactly one stream |
 | Canvas presets | `cargo test --test canvas_presets` and `cargo test --lib canvas_presets` | All 53 documented presets exist with exactly the documented pixel sizes (measured A4 2480 × 3508, US Letter 2550 × 3300, A0 9933 × 14043, Poster 5400 × 7200), every category is populated and every id is unique; print presets carry 300 dpi and convert 210 mm / 8.5 in to the published pixel counts; pixels ↔ mm / cm / in round-trip within one pixel; the same 210 mm doubles in pixels when the DPI doubles; 1 inch is 25.4 mm and 300 px at 300 dpi; aspect labels read as 3:4, 9:16 and 12:17 for A4; the aspect lock and the ratio chips reshape the canvas; impossible sizes (too small, 0 dpi, 400 MP) are refused while a webtoon page passes; a document built from A4 with 3 mm bleed and 10 mm safe area is 2550 × 3578 px with the right guides, a transparent background and a Sketch layer, and starts unmodified; black is stored as black rather than a custom colour; the library filters by category and search, sorts by name and size (A0 first), follows favourites, floats the recently used preset to the top, survives a restart through `canvas-presets.json`, updates and deletes custom presets, restores the defaults without losing the built-ins, and exports/imports a preset file without colliding ids; creating a canvas from the window applies size, DPI, background and sketch layer and records the preset in the recents; a hand-typed size is recorded as a custom recent; a project round-trips dpi / pixel aspect / bleed / safe area; and a PNG export carries `pHYs` 11811 pixels per metre (300 dpi) plus an `sRGB` chunk |
@@ -819,9 +841,9 @@ release is authorised:
 | Pointer painting (headless) | `cargo test --test ui_smoke` | A simulated press → move → release over the canvas paints real pixels, marks the document modified and ends the stroke |
 | Undo shortcuts (headless) | `cargo test --test ui_smoke` | After a simulated stroke, a synthetic `Ctrl+Z` removes all paint, the redo stack fills, and `Ctrl+Y` restores the stroke — driven through `InkforgeApp::frame`, the same code path the window uses |
 | Application launch | `cargo run` | **Not possible here** (headless Linux container, no display server) |
-| Windows release build | `cargo zigbuild --release --target x86_64-pc-windows-gnu` | **Passes** (1.5.0, exit 0, 42 s warm): a GUI-subsystem PE32+ x86-64 executable, 12.6 MB, imports only DLLs that ship with Windows 10/11 (`kernel32`, `user32`, `gdi32`, `ole32`, `dxgi`, `dwmapi`, `uxtheme`, `bcryptprimitives`, `api-ms-win-crt-*`) — no VCRUNTIME, MSVCP or libgcc/libstdc++ DLL. The only warning is zig's own libunwind `dllexport` redeclaration, from the toolchain |
-| Portable ZIP | `scripts/package-windows-cross.sh` | **Passes**: `dist/INKFORGE-1.5.0-windows-x86_64/` holds `INKFORGE.exe` (13 228 544 bytes), `README.txt` and `LICENSE-MIT.txt`; the ZIP is 5 777 776 bytes (5.5 MB), passes Python `zipfile.testzip()`, and unpacks to exactly those files |
-| Icon and version metadata in the PE | pefile over `target/x86_64-pc-windows-gnu/release/inkforge.exe` | **Passes, as a file read**: the resource directory holds seven `RT_ICON` images (1 128–33 066 bytes: the 16/24/32/48/64 px bitmaps and the 128/256 px PNGs), one `RT_GROUP_ICON`, and an `RT_VERSION` block whose `VS_FIXEDFILEINFO` has signature `0xFEEF04BD`, file and product version `1.5.0.0`, `VOS_NT_WINDOWS32` and `VFT_APP`; all eight string fields are present (`ProductName` INKFORGE, `FileDescription` "INKFORGE - a digital painting application for artists", `CompanyName`, `FileVersion` 1.5.0, `InternalName`, `LegalCopyright`, `OriginalFilename` INKFORGE.exe, `ProductVersion`). Explorer and Task Manager were **not** opened to look at it (§8) |
+| Windows release build | `cargo zigbuild --release --target x86_64-pc-windows-gnu` | **Passes** (1.6.0, exit 0): a GUI-subsystem PE32+ x86-64 executable, 13 282 816 bytes, imports only DLLs that ship with Windows 10/11 (`kernel32`, `user32`, `gdi32`, `ole32`, `dxgi`, `dwmapi`, `uxtheme`, `bcryptprimitives`, `api-ms-win-crt-*`) — no VCRUNTIME, MSVCP or libgcc/libstdc++ DLL. The only warning is zig's own libunwind `dllexport` redeclaration, from the toolchain |
+| Portable ZIP | `scripts/package-windows-cross.sh` | **Passes**: `dist/INKFORGE-1.6.0-windows-x86_64/` holds `INKFORGE.exe` (13 282 816 bytes), `README.txt` and `LICENSE-MIT.txt`; the ZIP is 5 800 579 bytes (5.6 MB) with SHA-256 `848f54f427ac14e7b43d3c0c942069181fdc5fc0306c82c10a198f57b907eab0`, passes Python `zipfile.testzip()`, and unpacks to exactly those files |
+| Icon and version metadata in the PE | pefile over `target/x86_64-pc-windows-gnu/release/inkforge.exe` | **Passes, as a file read**: the resource directory holds seven `RT_ICON` images (1 128–33 066 bytes: the 16/24/32/48/64 px bitmaps and the 128/256 px PNGs), one `RT_GROUP_ICON`, and an `RT_VERSION` block whose `VS_FIXEDFILEINFO` has signature `0xFEEF04BD`, file and product version `1.6.0.0`, `VOS_NT_WINDOWS32` and `VFT_APP`; all eight string fields are present (`ProductName` INKFORGE, `FileDescription` "INKFORGE - a digital painting application for artists", `CompanyName`, `FileVersion` 1.6.0, `InternalName`, `LegalCopyright`, `OriginalFilename` INKFORGE.exe, `ProductVersion`). Explorer and Task Manager were **not** opened to look at it (§8) |
 | Running the release on Windows | double-click `INKFORGE.exe` | **Not possible here** (Linux, no Windows, no display); the executable has never been launched — see §8 |
 
 What is therefore verified: the code compiles cleanly against the real
@@ -871,9 +893,9 @@ stroke, and is undone and redone by Ctrl+Z / Ctrl+Y.
   stamp-tip or dual-brush engine, so "bristle" and "watercolour" brushes are
   shaped by spacing and grain rather than by a real hair or wet-media simulation.
   None of them has been looked at on a screen (§8).
-* Undo covers pixel edits and layer structure/properties; selection changes in
-  general, and Quick Mask painting in particular, are not in the history —
-  background colour changes are document settings outside it too.
+* Undo covers pixel edits, layer structure/properties, selections (including
+  Quick Mask strokes), the canvas background and canvas size/crop. A selection
+  is not saved inside a project, and an image resize clears it.
 * Quick Mask painting is verified headlessly (coverage, bounds growth, erasing
   and the outline rebuild). How the wash follows a stroke, and the marchings
   ants reappearing when it ends, have not been seen on a real screen.
@@ -987,11 +1009,12 @@ stroke, and is undone and redone by Ctrl+Z / Ctrl+Y.
 * The New canvas window's printed size in inches and millimetres is computed
   from the DPI and the pixel aspect; it does not read an ICC profile's intended
   display size because there is no ICC support.
-* Importing a PNG does not read its `pHYs` chunk, so an opened image becomes a
-  72 dpi document even if the file declared another resolution. Exported PNGs
-  do carry `pHYs` and `sRGB`.
-* The 1.5.0 Windows package was cross-compiled on Linux and verified only as a
-  file: 64-bit, GUI subsystem, system-only imports, 12.6 MB. It has never been
+* Opening a PNG reads its `pHYs` chunk (1.6.0), so an opened image keeps the
+  resolution it declared; two different densities become the pixel aspect.
+  JPEG still opens at 72 dpi, because the writer in this build embeds no JFIF
+  density. Exporting writes `pHYs` and `sRGB`.
+* The 1.6.0 Windows package was cross-compiled on Linux and verified only as a
+  file: 64-bit, GUI subsystem, system-only imports. It has never been
   executed, so its GPU initialisation, window creation, fonts and file dialogs
   on Windows are all unconfirmed — as is anything about how it looks at a given
   DPI. The first launch on a Windows machine is the real test (Milestone 8).
@@ -999,7 +1022,7 @@ stroke, and is undone and redone by Ctrl+Z / Ctrl+Y.
   PE, not by looking at Windows: the `.ico` images and the `VERSIONINFO` strings
   are present and correct, but how Explorer, the task bar and Task Manager draw
   them at a given DPI, and whether the icon reads well at 16 px on a real
-  desktop, have not been seen. The About dialog shows the same 1.5.0 from the
+  desktop, have not been seen. The About dialog shows the same 1.6.0 from the
   compiled-in crate version.
 * The ZIP is unsigned. A downloaded copy will raise a SmartScreen warning on
   first run unless it is code-signed, which it is not.

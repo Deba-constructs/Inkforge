@@ -31,8 +31,14 @@ What it does
   its pixels, so dragging them back to neutral restores the original exactly;
   the values are saved in the project.
 * Flip the whole document horizontally or vertically, or rotate it 90° either
-  way or 180°, from the Image menu. Every layer turns with it, nothing is
-  resampled, and undo puts it back the way it was.
+  way or 180°, from the Image menu. Every layer turns with it, the selection
+  travels with it, nothing is resampled, and undo puts it back the way it was.
+* Change the page after you started painting, from the Image menu: Canvas
+  size... edits the width, height, resolution, bleed and safe area of an
+  existing document and decides with a nine-point anchor where the artwork
+  sits when the page grows or shrinks; Crop to selection and Trim transparent
+  edges cut the page down to what you painted. Nothing is resampled and each
+  one undoes in a single step.
 * Layer masks: select a layer and add a mask from the Layer panel; choose
   "reveal all" and paint black with the eraser, or "hide all" and paint white
   with the brush. White areas are visible, black areas hidden. Invert or delete
@@ -40,13 +46,16 @@ What it does
 * Clip a layer to the one below it (alpha inheritance): the layer keeps its
   colours, opacity and blend mode but can only show where the layer underneath
   has paint, so a multiply shadow stays inside the flat colour it belongs to.
-* Selections: rectangular marquee, freehand lasso and magic wand (colour
-  tolerance), with feathering, grow / shrink, invert, and a Quick mask view
-  that you can paint into with the brush and erase out of with the eraser.
+* Selections: rectangular marquee, freehand lasso, polygon lasso (click each
+  corner, then the first corner or Enter to close) and magic wand (colour
+  tolerance), with feathering, New / Add / Subtract / Intersect combine modes,
+  grow / shrink, invert, and a Quick mask view that you can paint into with the
+  brush and erase out of with the eraser. Every selection change is undoable.
   Painting, erasing, filling and shapes are all clipped to the selection.
 * Flood fill, and line / rectangle / ellipse shapes drawn with the current
   brush.
-* Undo and redo across painting, erasing, filling, shapes, layers and groups.
+* Undo and redo across painting, erasing, filling, shapes, selections, canvas
+  size and crops, the background colour, layers and groups.
 * New canvas window with 53 ready-made presets in seven categories:
   illustration, comic and manga, print (ISO A0-A6, US Letter/Legal/Tabloid and
   posters at 300 dpi), photography and social media, animation, game art and
@@ -137,10 +146,11 @@ Known limitations
 These are the honest edges of this build; they are listed in full in
 DEVELOPMENT.md in the source repository.
 
-* Selections (including Quick mask painting) and background colour changes are
-  not part of undo history.
 * Undo history is capped at 256 MB and drops the oldest edits once full.
-* There is no image transform (scale, rotate, skew, flip).
+* There is no free transform of a layer or selection: the whole document can be
+  flipped and turned, but a layer cannot be scaled, rotated to an arbitrary
+  angle, skewed or put into perspective yet.
+* A named selection cannot be saved and recalled later.
 * Pen pressure and tilt are read from Windows pointer messages and have not
   been tried with a real tablet yet; the Drawing tablet panel shows the live
   reading, so you can see whether your pen is reporting pressure and tilt.
@@ -165,6 +175,8 @@ DEVELOPMENT.md in the source repository.
   nothing.
 * Rulers are hidden while the canvas is turned, because there is no upright
   axis to measure along at an angle.
+* Resizing the canvas clears the selection, because it was described in the old
+  pixel coordinates.
 * This build was compiled and cross-compiled on Linux; it has not been launched
   on Windows or looked at on a real screen yet, so how the interface looks at
   your DPI and how the brush feels are still unconfirmed. Please report what

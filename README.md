@@ -7,9 +7,10 @@
 A desktop digital painting application for artists, written in Rust with
 `egui`/`eframe` and a GPU (wgpu) renderer.
 
-**Download for Windows** — the [1.5.0 release](https://github.com/Deba-constructs/Inkforge/releases/latest)
+**Download for Windows** — every [release](https://github.com/Deba-constructs/Inkforge/releases/latest)
 is a portable ZIP: unzip it, double-click `INKFORGE.exe`, nothing to install
-and no runtime to set up.
+and no runtime to set up. The latest published release is **1.5.0**; **1.6.0**
+is built, tested and ready to publish (see [RELEASING.md](RELEASING.md)).
 
 INKFORGE is built milestone by milestone. This repository currently contains
 **Milestones 1 to 6 plus most of Milestone 7**: the full editor workspace, a working painting engine
@@ -32,9 +33,14 @@ game art and UI, every setting editable down to the last margin, presets you can
 save, favourite, search and share, plus real print setup — bleed included in the
 canvas, safe-area and trim guides, rulers in pixels or millimetres, and DPI that
 reaches the exported PNG.
-Version 1.5.0 has been built into a
-portable Windows executable and packaged as a downloadable ZIP (see
-[Release package](#release-package)). See
+Version 1.6.0 (prepared, not yet published) makes selections undoable and
+combinable, adds the polygon lasso, lets the page be resized, cropped or trimmed
+after it was created — with a nine-point anchor and an editable resolution,
+bleed and safe area — and carries the selection along when the document is
+flipped or turned. It also persists the workspace layout, reads a PNG's
+resolution on open, and makes canvas background changes undoable.
+Every version has been built into a portable Windows executable and packaged as
+a downloadable ZIP (see [Release package](#release-package)). See
 [DEVELOPMENT.md](DEVELOPMENT.md) for the exact state of every feature.
 
 ## Current status
@@ -52,10 +58,11 @@ portable Windows executable and packaged as a downloadable ZIP (see
 | Layers: add, delete, reorder (buttons or dragging rows), duplicate, merge down, flatten, rename (double-click a row), show/hide, opacity, 17 blend modes, Clip to layer below and Lock transparent pixels | Working; rows show a live thumbnail (and a padlock when locked), painting always lands on the selected layer and strokes are clipped to it, and on a locked layer paint only recolours pixels that already exist — the eraser cannot take paint away |
 | Layer masks: add a mask that reveals or hides the whole layer, paint it with the brush (reveal) and eraser (hide), invert it, delete it | Working; the mask is a separate coverage buffer, so no pixel is ever destroyed: delete the mask and the layer is exactly as it was. A half-filled mask badge marks the row, mask editing is a checkbox in the layer panel, and adding, painting, inverting and deleting all undo. Fill and shapes deliberately refuse while mask editing is on, with a message pointing at the brush |
 | Colour adjustment per layer: brightness, contrast, saturation and hue sliders with Reset | Working; applied live while the layer is composited, so the pixels are never rewritten, the sliders undo and redo like any other layer property, and the values travel in the project file |
-| Image transforms: flip horizontal / vertical and rotate 90° clockwise / counter-clockwise / 180° | Working from the Image menu; every layer is permuted losslessly (nothing is resampled), a quarter turn swaps the canvas dimensions, and undo applies the opposite transform rather than storing a copy of the canvas — any selection is cleared, because it was described in the old coordinates |
+| Image transforms: flip horizontal / vertical and rotate 90° clockwise / counter-clockwise / 180° | Working from the Image menu; every layer is permuted losslessly (nothing is resampled), a quarter turn swaps the canvas dimensions, and undo applies the opposite transform rather than storing a copy of the canvas — the selection travels with the artwork and undo brings it back |
+| Canvas size, crop and trim after creation: Image ▸ Canvas size…, Crop to selection, Trim transparent edges | Working; the window edits width, height, resolution, bleed and safe area of an existing document, a nine-point anchor decides where the artwork sits when the page grows or shrinks, and nothing is resampled. Each operation is one undo step, and resizing clears the selection because it is described in old coordinates |
 | Layer groups: group a layer, add more layers into it, collapse/expand, double-click to rename, group visibility and opacity | Working; group opacity and visibility apply to every layer inside, an empty folder shows where to drag a layer, and painting needs a layer selected rather than the group |
 | Drag layers into and out of groups | Working; drop a layer on a folder row to put it inside, or on a top-level row to take it out, and the move (position and group) undoes in one step |
-| Selection: rectangular marquee, freehand lasso and magic wand (tolerance slider) with optional feathering, grow / shrink by dragging a slider, invert, Quick mask view, dashed outline, select all, deselect | Working; painting, erasing, filling and shapes are all clipped to the selection, soft edges included; the wand selects the connected area of similar colour under the click and outlines its real boundary, and dragging the live Grow / shrink slider moves the selection edge (right grows, left shrinks) and Invert selects everything outside the current selection, all without touching the artwork; the partly-selected part of a feathered edge is tinted on the canvas so you can see how soft it is while you paint, and Quick mask washes the whole selected area in translucent red and is editable: with it on, the brush paints into the selection and the eraser takes parts of it away, including outside the old selection |
+| Selection: rectangular marquee, freehand lasso, polygon lasso and magic wand (tolerance slider) with optional feathering, New / Add / Subtract / Intersect combine modes, grow / shrink by dragging a slider, invert, Quick mask view, dashed outline, select all, deselect | Working; painting, erasing, filling and shapes are all clipped to the selection, soft edges included; the wand selects the connected area of similar colour under the click and outlines its real boundary, and dragging the live Grow / shrink slider moves the selection edge (right grows, left shrinks) and Invert selects everything outside the current selection, all without touching the artwork; the partly-selected part of a feathered edge is tinted on the canvas so you can see how soft it is while you paint, and Quick mask washes the whole selected area in translucent red and is editable: with it on, the brush paints into the selection and the eraser takes parts of it away, including outside the old selection |
 | Fill: flood fill sampling the visible image, tolerance slider, fill selection | Working; one fill is one undo step |
 | Shapes: line, rectangle and ellipse drawn with the current brush, with a live preview | Working; committed as a single undo step |
 | Canvas viewport: page rendering, composited layers, white / transparent / custom background, zoom at cursor, pan, fit, 100% | Working |
@@ -83,11 +90,15 @@ disabled and carry a tooltip saying which milestone delivers them.
 
 ## What is missing
 
-Version 1.5.0 is a genuinely usable painting app rather than a finished one.
+Version 1.6.0 is a genuinely usable painting app rather than a finished one.
 These are the gaps, and the table above does not paper over them:
 
-* **No image transform.** A layer or selection cannot be scaled, flipped,
-  skewed or rotated as artwork — canvas rotation turns the view, not the paint.
+* **No free transform of a layer or selection.** The whole document can be
+  flipped and turned, but a single layer or a selection cannot be scaled,
+  rotated to an arbitrary angle, skewed or put into perspective yet — canvas
+  rotation turns the view, not the paint.
+* **Selections cannot be saved.** They undo and combine, but there is no named
+  selection stored in the project and recalled later.
 * **Masks are layer-only.** A layer can have one mask (reveal/hide, painted
   with the brush and eraser), but groups cannot, a mask cannot be moved to
   another layer on its own, and there is no mask density or feather control.
@@ -95,7 +106,7 @@ These are the gaps, and the table above does not paper over them:
 * **The project format is version 3.** Version 2 added masks and version 3 the
   print setup, so older builds refuse a newer file with a clear "made by a
   newer INKFORGE" message instead of misreading it. Version 1 and 2 projects
-  still open in 1.5.0, at 72 dpi with no bleed.
+  still open in 1.6.0, at 72 dpi with no bleed.
 * **Only 8-bit RGB is supported.** CMYK, Grayscale and 16/32-bit canvases are
   not offered at all — the engine composites 8-bit sRGB, and pretending
   otherwise would make the depth and mode fields lies. There is no ICC
@@ -143,17 +154,19 @@ the Rust runtime is statically linked, so end users need no Rust installation.
 ### Release package
 
 `1.5.0` is published on the [releases page](https://github.com/Deba-constructs/Inkforge/releases/latest)
-as `INKFORGE-1.5.0-windows-x86_64.zip` (5.5 MB, 5 777 776 bytes). It holds
-`INKFORGE.exe` (12.6 MB, 13 228 544 bytes, 64-bit Windows GUI executable), a
-`README.txt` for the artist and the licence, and the release notes list its
-SHA-256. Nothing needs installing: unzip it and run the executable. The two
-scripts below rebuild the same ZIP locally into `dist/`.
+as `INKFORGE-1.5.0-windows-x86_64.zip` (5.5 MB). `1.6.0` is prepared as
+`INKFORGE-1.6.0-windows-x86_64.zip` and its release notes are in
+[RELEASE-NOTES-1.6.0.md](RELEASE-NOTES-1.6.0.md). Each ZIP holds `INKFORGE.exe`
+(64-bit Windows GUI executable), a `README.txt` for the artist and the licence,
+and its release notes list the SHA-256. Nothing needs installing: unzip it and
+run the executable. The two scripts below rebuild the same ZIP locally into
+`dist/`.
 
 ```bash
 # On Windows, with the MSVC toolchain:
 powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1
 
-# On Linux, cross-compiled with cargo-zigbuild (how the 1.5.0 ZIP was produced):
+# On Linux, cross-compiled with cargo-zigbuild (how every ZIP was produced):
 rustup target add x86_64-pc-windows-gnu
 cargo install cargo-zigbuild    # needs `zig` on PATH
 scripts/package-windows-cross.sh
@@ -164,7 +177,7 @@ Both scripts write the same layout: a portable folder under `dist/` and its
 (`kernel32`, `user32`, `d3d`/`dxgi`, `dwmapi`, the `api-ms-win-crt-*` runtime),
 so no Visual C++ redistributable or MinGW runtime is needed. The executable
 carries its own icon (seven sizes, 16 to 256 px) and version metadata, so
-Explorer, the task bar and Task Manager show **INKFORGE 1.5.0** instead of a
+Explorer, the task bar and Task Manager show **INKFORGE 1.6.0** instead of a
 generic binary.
 
 Both packaging scripts go through `build.rs`, which compiles

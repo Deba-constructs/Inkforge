@@ -756,14 +756,19 @@ impl Canvas {
     /// inverse restores the document exactly. A quarter turn swaps the canvas
     /// width and height.
     ///
-    /// Any selection is cleared: it is described in the old pixel coordinates
-    /// and silently keeping it would select the wrong area of the turned
-    /// artwork.
+    /// A selection travels with the artwork: it is re-described in the
+    /// transformed coordinates, so flipping or turning a document keeps
+    /// selecting the same pixels. Undo applies the inverse transform, which
+    /// carries the selection back with it.
     pub fn transform(&mut self, transform: Transform) {
+        let (old_width, old_height) = (self.width, self.height);
         self.stack.transform(transform);
         self.width = self.stack.width();
         self.height = self.stack.height();
-        self.selection = None;
+        self.selection = self
+            .selection
+            .as_ref()
+            .and_then(|selection| selection.transformed(transform, old_width, old_height));
         self.modified = true;
     }
 
