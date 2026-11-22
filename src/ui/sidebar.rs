@@ -469,15 +469,13 @@ fn canvas_section(app: &mut InkforgeApp, ui: &mut egui::Ui) {
             .selectable_label(current == Background::White, "White")
             .clicked()
         {
-            app.canvas.set_background(Background::White);
-            app.set_status("Canvas background: white");
+            app.set_canvas_background(Background::White);
         }
         if ui
             .selectable_label(current == Background::Transparent, "Transparent")
             .clicked()
         {
-            app.canvas.set_background(Background::Transparent);
-            app.set_status("Canvas background: transparent");
+            app.set_canvas_background(Background::Transparent);
         }
 
         let mut custom = match current {
@@ -491,8 +489,9 @@ fn canvas_section(app: &mut InkforgeApp, ui: &mut egui::Ui) {
         )
         .changed()
         {
-            app.canvas.set_background(Background::Custom(custom));
-            app.set_status("Canvas background: custom colour");
+            // Every drag step is recorded, but consecutive colour changes
+            // merge into one undo step instead of flooding the history.
+            app.set_canvas_background(Background::Custom(custom));
         }
     });
 }

@@ -673,6 +673,35 @@ an ICC-based colour pipeline, and CMYK / Grayscale / 16- and 32-bit canvases.
   `PageView::point`, so they follow canvas rotation even though the rulers hide
   while it is turned.
 
+### Tier 1 local work after 1.5.0 (unreleased)
+
+Directed by the remaining-work inventory, in dependency order, kept local until
+release is authorised:
+
+* **Workspace preferences (`io/settings.rs`)** — panel visibility, ruler unit,
+  rulers/grid/guides/print marks and grid spacing persist in `settings.json`.
+  `InkforgeApp::enable_preferences` loads and applies them, and `frame` writes
+  them only when they differ from the last saved copy, so an idle frame never
+  touches the disk. A failed write is reported once, not every frame.
+* **PNG resolution import (`io/png.rs`, `io/raster.rs`)** — `read_dpi` walks the
+  PNG chunk list up to `IDAT` and reads `pHYs`; `open_image` now reads the file
+  once, decodes it and applies the density (two different densities become the
+  pixel aspect). A file without the chunk keeps the default 72 dpi.
+* **Undoable background** — `Change::Background` stores the before/after
+  `Background` pair, merges a colour drag into one step, and is applied through
+  `InkforgeApp::set_canvas_background`, which the Canvas panel now calls.
+* **History merging across undo** — testing the background edit exposed that a
+  property change made after undo/redo could merge into the edit undo had just
+  restored, silently rewriting history. `History` now keeps `merge_open` false
+  after undo/redo and after a clear, so the next change is its own step.
+* **CI (`.github/workflows/ci.yml`)** — `cargo check --all-targets` and
+  `cargo test --all-targets` on Ubuntu 24.04 with the X11/Wayland libraries.
+  Written but never executed: the workflow only runs when the repository is
+  pushed, which needs explicit authorisation.
+* **Not done yet** — selection history, canvas size/crop after creation,
+  rulers on a turned canvas, and the rest of the inventory (`REMAINING-WORK.md`
+  in the project files).
+
 ## 4. Architecture notes and deviations from the suggested tree
 
 * `src/lib.rs` + `src/main.rs`: the app lives in a library and `main.rs` only
@@ -732,7 +761,7 @@ an ICC-based colour pipeline, and CMYK / Grayscale / 16- and 32-bit canvases.
 | Check | Command | Result |
 | --- | --- | --- |
 | Type/compile check, all targets | `cargo check --all-targets` | Passes, 0 errors, 0 warnings |
-| Tests | `cargo test --all-targets` | Passes — 326 tests, 0 failures (exit 0), including 20 new in-crate unit tests (unit conversion, validation, aspect maths, the preset library, PNG chunk writing) and 15 new canvas-preset integration tests. The rest of the breakdown: 7 painting, 39 layers/groups, 7 layer alpha lock, 16 blend modes, 9 clipping, 12 layer masks, 16 colour adjustments, 8 history, 7 brush presets, 6 stabiliser, 50 selection/fill/shapes, 18 headless UI, 9 file I/O, 12 OpenRaster export, 7 autosave/recovery, 7 recent projects, 11 tile pyramid, 7 performance, 9 pen pressure/tilt, 2 Win32 pointer layouts, 10 canvas rotation, 8 document transforms |
+| Tests | `cargo test --all-targets` | Passes — 336 tests, 0 failures (exit 0), including 7 new workspace tests (persisted preferences, undoable background, PNG resolution import) and 3 new preference/PNG unit tests. Also including 20 in-crate unit tests (unit conversion, validation, aspect maths, the preset library, PNG chunk writing) and 15 new canvas-preset integration tests. The rest of the breakdown: 7 painting, 39 layers/groups, 7 layer alpha lock, 16 blend modes, 9 clipping, 12 layer masks, 16 colour adjustments, 8 history, 7 brush presets, 6 stabiliser, 50 selection/fill/shapes, 18 headless UI, 9 file I/O, 12 OpenRaster export, 7 autosave/recovery, 7 recent projects, 11 tile pyramid, 7 performance, 9 pen pressure/tilt, 2 Win32 pointer layouts, 10 canvas rotation, 8 document transforms |
 | Canvas rotation | `cargo test --test view_rotation` | A fresh view is upright; a quarter turn sends the page corners where they look like they go; screen and canvas stay exact inverses at eight angles with zoom and pan applied; cursor-anchored zoom on a turned view does not drift; angles accumulate and wrap into (-180°, 180°]; 1.5° near a quarter turn snaps onto it while a deliberate 0.5 rad is left alone; reset and NaN/infinite input behave; a turned landscape page fits into the window height (0.528 at 1000 × 600) instead of the width; the page rectangle itself is not turned. The turned *rendering* has not been looked at — no display here (§8) |
 | Pen pressure and tilt | `cargo test --test pen` and `cargo test --lib pointer` | A mouse leaves the brush exactly as configured; half pressure paints fainter *and* narrower (a dab's footprint stops short of where full pressure reaches); a feather touch still leaves a line above `MIN_DAB_RADIUS`; 60° of tilt widens a 20 px tip to 26 px without changing opacity, and never pushes the brush past `MAX_SIZE`; 0% amounts and the off switch ignore the pen entirely; a NaN/infinite reading falls back to full pressure; a real stroke driven through `begin_stroke`/`extend_stroke` covers 18 px above its path at full pressure but not at 25%; and the Win32 `POINTER_INFO` / `POINTER_PEN_INFO` sizes and field offsets match the 64-bit SDK. The tablet path itself has **not** run — no pen and no Windows here (§8) |
 | Start state | `cargo test --test ui_smoke` | An untouched canvas paints the "Start painting" card, a simulated drag removes it, and undoing the only stroke brings it back (proving the cached empty check follows the composite revision) |

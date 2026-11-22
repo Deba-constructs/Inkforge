@@ -15,6 +15,7 @@ pub mod project;
 pub mod raster;
 pub mod recent;
 pub mod recovery;
+pub mod settings;
 
 pub use canvas_presets::{
     builtin_presets, px_to_unit, unit_to_px, BackgroundSpec, Browse, CanvasPreset, CanvasSetup,
@@ -24,6 +25,7 @@ pub use ora::export_ora;
 pub use project::{load_project, save_project};
 pub use raster::{export_image, open_image, read_image, ImageFormat};
 pub use recovery::RecoveryInfo;
+pub use settings::Preferences;
 
 use crate::egui::Color32;
 

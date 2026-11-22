@@ -70,11 +70,68 @@ fn pixels_per_metre(dpi: f32) -> u32 {
 /// Offset just past the PNG signature and its `IHDR` chunk.
 const IHDR_END: usize = 8 + 4 + 4 + 13 + 4;
 
+/// The eight bytes every PNG starts with.
+const SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+
+/// Read the physical resolution a PNG declares, in dots per inch.
+///
+/// Only the `pHYs` chunk with the metre unit is understood; a file without one
+/// (or one that writes it in an unknown unit) reports `None` and the caller
+/// keeps its default resolution. Metadata always precedes the image data, so
+/// the walk stops at `IDAT` rather than scanning the compressed stream.
+pub(crate) fn read_dpi(bytes: &[u8]) -> Option<(f32, f32)> {
+    if bytes.len() < IHDR_END || &bytes[0..8] != SIGNATURE {
+        return None;
+    }
+
+    let mut offset = 8;
+    while offset + 12 <= bytes.len() {
+        let length = u32::from_be_bytes([
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+        ]) as usize;
+        let kind = &bytes[offset + 4..offset + 8];
+        let data = offset + 8;
+        let after = data.saturating_add(length).saturating_add(4);
+        if after > bytes.len() {
+            return None;
+        }
+
+        if kind == b"pHYs" && length == 9 {
+            if bytes[data + 8] != 1 {
+                return None;
+            }
+            let per_metre = |index: usize| {
+                u32::from_be_bytes([
+                    bytes[data + index],
+                    bytes[data + index + 1],
+                    bytes[data + index + 2],
+                    bytes[data + index + 3],
+                ]) as f32
+            };
+            let dpi_x = per_metre(0) * 0.0254;
+            let dpi_y = per_metre(4) * 0.0254;
+            if dpi_x >= 1.0 && dpi_y >= 1.0 && dpi_x.is_finite() && dpi_y.is_finite() {
+                return Some((dpi_x, dpi_y));
+            }
+            return None;
+        }
+
+        if kind == b"IDAT" {
+            return None;
+        }
+        offset = after;
+    }
+    None
+}
+
 /// Insert an ancillary chunk directly after `IHDR`, which every PNG writer
 /// places first.
 fn insert_after_ihdr(png: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) -> Result<(), String> {
     // Refuse anything that is not a PNG instead of corrupting it.
-    if png.len() < IHDR_END || &png[0..8] != b"\x89PNG\r\n\x1a\n" || &png[12..16] != b"IHDR" {
+    if png.len() < IHDR_END || &png[0..8] != SIGNATURE || &png[12..16] != b"IHDR" {
         return Err(String::from(
             "The encoder did not produce a PNG stream that can carry metadata.",
         ));
@@ -242,6 +299,23 @@ mod tests {
         let kinds: Vec<[u8; 4]> = chunks(&png).into_iter().map(|(kind, _, _)| kind).collect();
         assert!(!kinds.contains(&*b"pHYs"));
         assert!(!kinds.contains(&*b"sRGB"));
+    }
+
+    #[test]
+    fn the_resolution_can_be_read_back_out() {
+        let meta = PngMeta {
+            dpi_x: 450.0,
+            dpi_y: 300.0,
+            srgb: true,
+        };
+        let png = encode_rgba(&rgba(2, 2), 2, 2, Some(meta)).expect("png");
+        let (x, y) = read_dpi(&png).expect("pHYs");
+        assert!((x - 450.0).abs() < 0.5, "{x}");
+        assert!((y - 300.0).abs() < 0.5, "{y}");
+
+        // A PNG without the chunk has no physical size to report.
+        let plain = encode_rgba(&rgba(1, 1), 1, 1, None).expect("png");
+        assert_eq!(read_dpi(&plain), None);
     }
 
     #[test]

@@ -6,7 +6,7 @@
 //! or a before/after snapshot of the properties that changed.
 
 use crate::egui::{Color32, Pos2};
-use crate::engine::{segment_bounds, Canvas, PixelRegion, Surface};
+use crate::engine::{segment_bounds, Background, Canvas, PixelRegion, Surface};
 use crate::layers::{
     Entry, FlattenedStack, GroupProps, Layer, LayerId, LayerProps, MergedLayer,
 };
@@ -48,6 +48,13 @@ pub enum Change {
         group: LayerId,
         before: GroupProps,
         after: GroupProps,
+    },
+    /// The document's background changed. The background is a document
+    /// setting rather than paint, so the pair is all undo needs; a colour
+    /// drag merges into one step.
+    Background {
+        before: Background,
+        after: Background,
     },
     /// Entries were inserted at `index`.
     Inserted { index: usize, entries: Vec<Entry> },
@@ -115,7 +122,10 @@ impl Change {
             Self::Inserted { entries, .. }
             | Self::Removed { entries, .. }
             | Self::Flattened { entries, .. } => entries.iter().map(Entry::memory_bytes).sum(),
-            Self::Moved { .. } | Self::Transformed { .. } | Self::MaskAdded { .. } => 0,
+            Self::Moved { .. }
+            | Self::Transformed { .. }
+            | Self::MaskAdded { .. }
+            | Self::Background { .. } => 0,
             Self::MaskPixels { patches, .. } => {
                 patches.iter().map(TilePatch::memory_bytes).sum()
             }
@@ -222,6 +232,14 @@ impl Edit {
         }
     }
 
+    /// The canvas background changed.
+    pub fn background(before: Background, after: Background) -> Self {
+        Self {
+            label: "canvas background",
+            change: Change::Background { before, after },
+        }
+    }
+
     pub fn flattened(flattened: FlattenedStack, label: &'static str) -> Self {
         Self {
             label,
@@ -320,6 +338,9 @@ impl Edit {
             } => {
                 let props = if undo { before } else { after };
                 canvas.set_group_props(*group, props.clone());
+            }
+            Change::Background { before, after } => {
+                canvas.set_background(if undo { *before } else { *after });
             }
             Change::Inserted { index, entries } => {
                 if undo {
@@ -468,6 +489,15 @@ impl Edit {
                 self.label = incoming.label;
                 true
             }
+            (
+                Change::Background { after, .. },
+                Change::Background {
+                    after: new_after, ..
+                },
+            ) if self.label == incoming.label => {
+                *after = *new_after;
+                true
+            }
             _ => false,
         }
     }
@@ -594,6 +624,12 @@ pub struct History {
     redo: Vec<Edit>,
     memory: usize,
     limit: usize,
+    /// Whether the newest edit may absorb a continuation of itself.
+    ///
+    /// False on a fresh history and right after undo/redo, so a slider dragged
+    /// again after an undo becomes its own step instead of quietly rewriting
+    /// the edit that undo just restored.
+    merge_open: bool,
 }
 
 impl History {
@@ -603,6 +639,7 @@ impl History {
             redo: Vec::new(),
             memory: 0,
             limit: DEFAULT_MEMORY_LIMIT,
+            merge_open: false,
         }
     }
 
@@ -639,13 +676,16 @@ impl History {
     pub fn push(&mut self, edit: Edit) {
         self.redo.clear();
 
-        if let Some(top) = self.undo.last_mut() {
-            if top.try_merge(&edit) {
-                self.recalculate();
-                return;
+        if self.merge_open {
+            if let Some(top) = self.undo.last_mut() {
+                if top.try_merge(&edit) {
+                    self.recalculate();
+                    return;
+                }
             }
         }
 
+        self.merge_open = true;
         self.undo.push(edit);
         self.recalculate();
         self.trim();
@@ -656,6 +696,7 @@ impl History {
         let mut edit = self.undo.pop()?;
         edit.apply(canvas, true);
         let label = edit.label();
+        self.merge_open = false;
         self.redo.push(edit);
         self.recalculate();
         Some(label)
@@ -666,6 +707,7 @@ impl History {
         let mut edit = self.redo.pop()?;
         edit.apply(canvas, false);
         let label = edit.label();
+        self.merge_open = false;
         self.undo.push(edit);
         self.recalculate();
         Some(label)
@@ -675,6 +717,7 @@ impl History {
         self.undo.clear();
         self.redo.clear();
         self.memory = 0;
+        self.merge_open = false;
     }
 
     fn recalculate(&mut self) {

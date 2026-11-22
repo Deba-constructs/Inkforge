@@ -11,7 +11,10 @@ use image::codecs::jpeg::JpegEncoder;
 use image::{ExtendedColorType, ImageEncoder};
 
 use crate::egui::Color32;
-use crate::engine::{Background, Canvas, MIN_CANVAS_DIM, PixelRegion};
+use crate::engine::{
+    Background, Canvas, DEFAULT_DPI, MAX_PIXEL_ASPECT, MIN_CANVAS_DIM, MIN_PIXEL_ASPECT,
+    PixelRegion,
+};
 use crate::layers::{composite_pixel, BlendMode};
 
 use super::png::{self, PngMeta};
@@ -126,7 +129,13 @@ pub(crate) fn flatten_rgba(canvas: &mut Canvas) -> (u32, u32, Vec<u8>) {
 /// Decode any PNG or JPEG into premultiplied pixels, row major.
 pub fn read_image(path: &Path) -> Result<(u32, u32, Vec<Color32>), String> {
     let bytes = fs_read(path)?;
-    let decoded = image::load_from_memory(&bytes).map_err(|error| {
+    decode_image(&bytes, path)
+}
+
+/// Decode bytes already read from `path` (the caller may also want the file's
+/// PNG metadata, and reading the file twice is pointless).
+fn decode_image(bytes: &[u8], path: &Path) -> Result<(u32, u32, Vec<Color32>), String> {
+    let decoded = image::load_from_memory(bytes).map_err(|error| {
         format!(
             "{} is not a PNG or JPEG image this build can read: {error}",
             display_name(path)
@@ -148,8 +157,21 @@ pub fn read_image(path: &Path) -> Result<(u32, u32, Vec<Color32>), String> {
 }
 
 /// Open an image as its own document, named after the file.
+///
+/// A PNG's `pHYs` chunk is honoured, so a 300 dpi proof reopens at 300 dpi
+/// rather than silently at the default 72. JPEG has no portable density chunk
+/// in the stream this build writes, so it opens at the default resolution.
 pub fn open_image(path: &Path) -> Result<Canvas, String> {
-    let (width, height, pixels) = read_image(path)?;
+    let bytes = fs_read(path)?;
+    let (width, height, pixels) = decode_image(&bytes, path)?;
+    let (dpi, pixel_aspect) = match super::png::read_dpi(&bytes) {
+        // A non-square pixel aspect is exactly two different densities.
+        Some((dpi_x, dpi_y)) => (
+            dpi_y,
+            (dpi_x / dpi_y).clamp(MIN_PIXEL_ASPECT, MAX_PIXEL_ASPECT),
+        ),
+        None => (DEFAULT_DPI, 1.0),
+    };
 
     // Very small images are padded to the minimum canvas size so there is room
     // to paint; the artwork itself keeps its exact pixels at the top-left.
@@ -180,6 +202,7 @@ pub fn open_image(path: &Path) -> Result<Canvas, String> {
     if let Some(surface) = canvas.layer_surface_mut(layer) {
         surface.write_region(region, &buffer);
     }
+    canvas.set_print_setup(dpi, pixel_aspect, 0.0, 0.0);
     canvas.invalidate_composite(None);
     canvas.mark_saved();
 

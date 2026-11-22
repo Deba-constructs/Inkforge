@@ -10,13 +10,13 @@ use std::time::{Duration, Instant};
 use inkforge::egui::{Color32, Context, Key, Modifiers, Pos2, ViewportCommand};
 
 use crate::engine::{
-    BrushDab, BrushSettings, Canvas, PenSample, PenSettings, PixelRegion, Selection, SelectionMode,
-    ShapeKind, Stabilizer, ThumbnailCache, TilePyramid, Viewport, MAX_FEATHER,
+    Background, BrushDab, BrushSettings, Canvas, PenSample, PenSettings, PixelRegion, Selection,
+    SelectionMode, ShapeKind, Stabilizer, ThumbnailCache, TilePyramid, Viewport, MAX_FEATHER,
 };
 use crate::history::{Edit, History, Recorder};
 use crate::io::{
-    self, recent, recovery, Browse, CanvasSetup, Category, ImageFormat, PresetLibrary, RecoveryInfo,
-    Scope, Sort, Unit,
+    self, recent, recovery, Browse, CanvasSetup, Category, ImageFormat, Preferences, PresetLibrary,
+    RecoveryInfo, Scope, Sort, Unit,
 };
 use crate::layers::{Adjustment, BlendMode, Entry, GroupProps, LayerId, LayerProps};
 use crate::ui;
@@ -296,6 +296,13 @@ pub struct InkforgeApp {
     pub presets: PresetLibrary,
     /// Folder the preset library is stored in, when persistence is on.
     pub presets_dir: Option<PathBuf>,
+    /// Folder the workspace preferences are stored in, when persistence is on.
+    pub settings_dir: Option<PathBuf>,
+    /// The preferences last written to disk, so an unchanged workspace is not
+    /// rewritten every frame.
+    saved_preferences: Preferences,
+    /// The last preferences save failure, reported once instead of per frame.
+    preferences_error: Option<String>,
     /// Unit the rulers and the measurement readouts use.
     pub units: Unit,
     /// View toggles for the measurement and print guides.
@@ -388,7 +395,8 @@ impl InkforgeApp {
         }
         if let Some(dir) = recovery::data_dir() {
             app.enable_recent(dir.clone());
-            app.enable_presets(dir);
+            app.enable_presets(dir.clone());
+            app.enable_preferences(dir);
         }
         app
     }
@@ -409,6 +417,9 @@ impl InkforgeApp {
             new_canvas: NewCanvasState::default(),
             presets: PresetLibrary::new(),
             presets_dir: None,
+            settings_dir: None,
+            saved_preferences: Preferences::default(),
+            preferences_error: None,
             units: Unit::Pixels,
             show_rulers: false,
             show_grid: false,
@@ -580,6 +591,80 @@ impl InkforgeApp {
     }
 
     // ---- canvas presets -------------------------------------------------
+
+    // ---- workspace preferences -----------------------------------------
+
+    /// Load the workspace preferences stored in `dir` and remember where to
+    /// write them back.
+    pub fn enable_preferences(&mut self, dir: PathBuf) {
+        let preferences = Preferences::load(&dir);
+        self.apply_preferences(&preferences);
+        self.settings_dir = Some(dir);
+        self.saved_preferences = preferences;
+    }
+
+    /// The workspace settings as they are right now.
+    pub fn preferences(&self) -> Preferences {
+        Preferences {
+            show_tool_rail: self.show_tool_rail,
+            show_sidebar: self.show_sidebar,
+            units: self.units,
+            show_rulers: self.show_rulers,
+            show_grid: self.show_grid,
+            show_guides: self.show_guides,
+            show_print_marks: self.show_print_marks,
+            grid_spacing: self.grid_spacing,
+        }
+    }
+
+    fn apply_preferences(&mut self, preferences: &Preferences) {
+        let preferences = preferences.clone().sanitised();
+        self.show_tool_rail = preferences.show_tool_rail;
+        self.show_sidebar = preferences.show_sidebar;
+        self.units = preferences.units;
+        self.show_rulers = preferences.show_rulers;
+        self.show_grid = preferences.show_grid;
+        self.show_guides = preferences.show_guides;
+        self.show_print_marks = preferences.show_print_marks;
+        self.grid_spacing = preferences.grid_spacing;
+    }
+
+    /// Write the preferences when they have actually changed.
+    fn save_preferences(&mut self) {
+        let Some(dir) = self.settings_dir.clone() else {
+            return;
+        };
+        let preferences = self.preferences();
+        if preferences == self.saved_preferences {
+            return;
+        }
+
+        match preferences.save(&dir) {
+            Ok(()) => {
+                self.saved_preferences = preferences;
+                self.preferences_error = None;
+            }
+            Err(error) => {
+                // A read-only data folder must not spam the status line.
+                if self.preferences_error.as_deref() != Some(error.as_str()) {
+                    self.set_status(format!("Workspace settings could not be saved: {error}"));
+                    self.preferences_error = Some(error);
+                }
+            }
+        }
+    }
+
+    /// Change the canvas background as one undoable document setting.
+    pub fn set_canvas_background(&mut self, background: Background) {
+        let before = self.canvas.background();
+        if before == background {
+            return;
+        }
+        self.canvas.set_background(background);
+        self.history
+            .push(Edit::background(before, background));
+        self.set_status(format!("Canvas background: {}", background.label()));
+    }
 
     /// Load and persist the preset library stored in `dir`.
     pub fn enable_presets(&mut self, dir: PathBuf) {
@@ -2496,6 +2581,7 @@ impl InkforgeApp {
         self.maybe_autosave();
 
         ui::show(self, ui);
+        self.save_preferences();
         self.update_window_title(&ctx);
     }
 
