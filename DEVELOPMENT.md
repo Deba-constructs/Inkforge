@@ -699,8 +699,9 @@ Continuing the inventory in dependency order:
   Shrink previews move the selection without touching history and commit one
   step on release; a Quick Mask stroke captures the selection at stroke start
   and commits at the end. `Selection::same_shape` stops no-op steps.
-* **Known limits** — a resize clears the selection (item 24), and selection
-  save/load is still open. The Canvas size window has only been rendered
+* **Known limits** — a resize clears the selection (a flip or turn keeps it;
+  a resize moves the page origin, not the pixels), and selection save/load is
+  still open. The Canvas size window has only been rendered
   headlessly.
 
 ### Tier 1 local work after 1.5.0 (unreleased)
