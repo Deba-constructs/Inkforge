@@ -15,6 +15,18 @@ use super::{
     ShapeKind, Surface, Transform,
 };
 
+/// Clip a region to a page, returning an empty region when it misses it.
+fn clamp_region(region: PixelRegion, width: u32, height: u32) -> PixelRegion {
+    let x = region.x.min(width);
+    let y = region.y.min(height);
+    PixelRegion {
+        x,
+        y,
+        width: region.width.min(width - x),
+        height: region.height.min(height - y),
+    }
+}
+
 /// Recolour a pixel without changing its alpha, for a layer with locked
 /// transparency.
 ///
@@ -751,6 +763,62 @@ impl Canvas {
         self.stack.transform(transform);
         self.width = self.stack.width();
         self.height = self.stack.height();
+        self.selection = None;
+        self.modified = true;
+    }
+
+    /// Resize, pad or crop the page without resampling.
+    ///
+    /// `offset` is where the old origin lands in the new page (see
+    /// [`Anchor::offset`]). Growing adds transparent margin, shrinking discards
+    /// the pixels outside the page. The selection is cleared because it is
+    /// described in the old coordinates.
+    pub fn resize_with_offset(&mut self, width: u32, height: u32, offset: (i32, i32)) {
+        self.stack.resize(width, height, offset);
+        self.width = width;
+        self.height = height;
+        self.selection = None;
+        self.modified = true;
+    }
+
+    /// Crop the page to a pixel region, discarding everything outside it.
+    pub fn crop_to(&mut self, region: PixelRegion) {
+        let region = clamp_region(region, self.width, self.height);
+        if region.is_empty() {
+            return;
+        }
+        self.resize_with_offset(
+            region.width,
+            region.height,
+            (-(region.x as i32), -(region.y as i32)),
+        );
+    }
+
+    /// Bounding box of everything visible, or `None` when the layers are empty.
+    ///
+    /// Used by "trim transparent edges": the document background is ignored,
+    /// so a white canvas still crops to its painted area.
+    pub fn visible_bounds(&mut self) -> Option<PixelRegion> {
+        self.composite();
+        self.stack.cached_composite().opaque_bounds()
+    }
+
+    /// Every entry plus the active row, for a resize snapshot.
+    pub fn snapshot_entries(&self) -> (Vec<Entry>, usize) {
+        (self.stack.entries().to_vec(), self.stack.active_index())
+    }
+
+    /// Put a snapshot back, including the page size it was made on.
+    pub fn restore_entries(
+        &mut self,
+        entries: Vec<Entry>,
+        active: usize,
+        width: u32,
+        height: u32,
+    ) {
+        self.stack.replace_document(entries, active, width, height);
+        self.width = width;
+        self.height = height;
         self.selection = None;
         self.modified = true;
     }

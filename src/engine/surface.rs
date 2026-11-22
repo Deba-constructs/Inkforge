@@ -137,6 +137,52 @@ impl Surface {
         self.revision = self.revision.wrapping_add(1);
     }
 
+    /// Resize the buffer without resampling.
+    ///
+    /// `offset` is where the old origin lands in the new surface: positive
+    /// values add transparent margin before the artwork, negative values crop
+    /// that many pixels off the left and top.
+    pub fn resize(&mut self, width: u32, height: u32, offset: (i32, i32)) {
+        let width = width.max(1);
+        let height = height.max(1);
+        if (width, height) == (self.width, self.height) && offset == (0, 0) {
+            return;
+        }
+
+        let mut pixels = vec![Color32::TRANSPARENT; width as usize * height as usize];
+        let (dx, dy) = (offset.0 as i64, offset.1 as i64);
+
+        for source_y in 0..self.height as i64 {
+            let target_y = source_y + dy;
+            if target_y < 0 || target_y >= height as i64 {
+                continue;
+            }
+
+            let source_x = (-dx).max(0);
+            let source_end = (width as i64 - dx).min(self.width as i64);
+            if source_end <= source_x {
+                continue;
+            }
+
+            let len = (source_end - source_x) as usize;
+            let source_start = source_y as usize * self.width as usize + source_x as usize;
+            let target_start = target_y as usize * width as usize + (source_x + dx) as usize;
+            pixels[target_start..target_start + len]
+                .copy_from_slice(&self.pixels[source_start..source_start + len]);
+        }
+
+        self.width = width;
+        self.height = height;
+        self.pixels = pixels;
+        self.dirty = Some(PixelRegion {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        });
+        self.revision = self.revision.wrapping_add(1);
+    }
+
     pub fn clear(&mut self) {
         self.pixels.fill(Color32::TRANSPARENT);
         self.mark_dirty(PixelRegion {

@@ -667,6 +667,22 @@ impl LayerStack {
         self.invalidate_all();
     }
 
+    /// Replace the whole stack *and* its page size, used when undo restores a
+    /// document from before a canvas resize or crop.
+    pub fn replace_document(
+        &mut self,
+        entries: Vec<Entry>,
+        active: usize,
+        width: u32,
+        height: u32,
+    ) {
+        self.replace(entries, active);
+        self.width = width;
+        self.height = height;
+        self.composite = Surface::new(width, height);
+        self.invalidate_all();
+    }
+
     pub fn props(&self, id: LayerId) -> Option<LayerProps> {
         self.layer(id).map(Layer::props)
     }
@@ -817,6 +833,26 @@ impl LayerStack {
         }
 
         let (width, height) = transform.output_size(self.width, self.height);
+        self.width = width;
+        self.height = height;
+        self.composite = Surface::new(width, height);
+        self.invalidate_all();
+    }
+
+    /// Resize every layer surface and mask to a new page size.
+    ///
+    /// `offset` is the old origin's place in the new page, so the artwork stays
+    /// anchored while the canvas grows or is cropped around it.
+    pub fn resize(&mut self, width: u32, height: u32, offset: (i32, i32)) {
+        for entry in &mut self.entries {
+            if let Entry::Layer(layer) = entry {
+                layer.surface_mut().resize(width, height, offset);
+                if let Some(mask) = layer.mask_mut() {
+                    mask.resize(width, height, offset);
+                }
+            }
+        }
+
         self.width = width;
         self.height = height;
         self.composite = Surface::new(width, height);

@@ -6,7 +6,7 @@
 //! or a before/after snapshot of the properties that changed.
 
 use crate::egui::{Color32, Pos2};
-use crate::engine::{segment_bounds, Background, Canvas, PixelRegion, Surface};
+use crate::engine::{segment_bounds, Background, Canvas, PixelRegion, Selection, Surface};
 use crate::layers::{
     Entry, FlattenedStack, GroupProps, Layer, LayerId, LayerProps, MergedLayer,
 };
@@ -110,6 +110,30 @@ pub enum Change {
         layer: LayerId,
         mask: Option<Surface>,
     },
+    /// The page was resized, padded or cropped.
+    ///
+    /// `entries` is the document before the change. Undo puts it back; redo
+    /// replays the resize from it, so only one copy of the pixels is retained
+    /// instead of a before and an after snapshot.
+    CanvasResize {
+        entries: Vec<Entry>,
+        active: usize,
+        width: u32,
+        height: u32,
+        after_width: u32,
+        after_height: u32,
+        offset: (i32, i32),
+    },
+    /// The selection was made, changed, inverted or cleared.
+    Selection {
+        before: Option<Selection>,
+        after: Option<Selection>,
+    },
+    /// Resolution, pixel aspect, bleed or safe area changed.
+    PrintSetup {
+        before: [f32; 4],
+        after: [f32; 4],
+    },
 }
 
 impl Change {
@@ -125,7 +149,13 @@ impl Change {
             Self::Moved { .. }
             | Self::Transformed { .. }
             | Self::MaskAdded { .. }
-            | Self::Background { .. } => 0,
+            | Self::Background { .. }
+            | Self::PrintSetup { .. } => 0,
+            Self::CanvasResize { entries, .. } => entries.iter().map(Entry::memory_bytes).sum(),
+            Self::Selection { before, after } => before
+                .as_ref()
+                .map_or(0, Selection::mask_bytes)
+                + after.as_ref().map_or(0, Selection::mask_bytes),
             Self::MaskPixels { patches, .. } => {
                 patches.iter().map(TilePatch::memory_bytes).sum()
             }
@@ -229,6 +259,47 @@ impl Edit {
                 group_before,
                 group_after,
             },
+        }
+    }
+
+    /// The page was resized, padded or cropped.
+    #[allow(clippy::too_many_arguments)]
+    pub fn canvas_resize(
+        entries: Vec<Entry>,
+        active: usize,
+        width: u32,
+        height: u32,
+        after_width: u32,
+        after_height: u32,
+        offset: (i32, i32),
+    ) -> Self {
+        Self {
+            label: "canvas size",
+            change: Change::CanvasResize {
+                entries,
+                active,
+                width,
+                height,
+                after_width,
+                after_height,
+                offset,
+            },
+        }
+    }
+
+    /// The selection changed.
+    pub fn selection(before: Option<Selection>, after: Option<Selection>) -> Self {
+        Self {
+            label: "selection",
+            change: Change::Selection { before, after },
+        }
+    }
+
+    /// Print setup changed: `[dpi, pixel aspect, bleed px, safe px]`.
+    pub fn print_setup(before: [f32; 4], after: [f32; 4]) -> Self {
+        Self {
+            label: "canvas setup",
+            change: Change::PrintSetup { before, after },
         }
     }
 
@@ -341,6 +412,27 @@ impl Edit {
             }
             Change::Background { before, after } => {
                 canvas.set_background(if undo { *before } else { *after });
+            }
+            Change::CanvasResize {
+                entries,
+                active,
+                width,
+                height,
+                after_width,
+                after_height,
+                offset,
+            } => {
+                canvas.restore_entries(entries.clone(), *active, *width, *height);
+                if !undo {
+                    canvas.resize_with_offset(*after_width, *after_height, *offset);
+                }
+            }
+            Change::Selection { before, after } => {
+                canvas.set_selection(if undo { before } else { after }.clone());
+            }
+            Change::PrintSetup { before, after } => {
+                let setup = if undo { before } else { after };
+                canvas.set_print_setup(setup[0], setup[1], setup[2], setup[3]);
             }
             Change::Inserted { index, entries } => {
                 if undo {

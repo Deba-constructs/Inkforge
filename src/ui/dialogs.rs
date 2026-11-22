@@ -30,6 +30,7 @@ pub fn show(app: &mut InkforgeApp, ctx: &egui::Context) {
         // The preset browser is a window of its own; it needs the preset
         // library, which the other dialogs do not touch.
         Some(Dialog::NewCanvas) => super::new_canvas::show(app, ctx),
+        Some(Dialog::CanvasSize) => super::canvas_size::show(app, ctx),
         Some(Dialog::About) => about(app, ctx),
         Some(Dialog::Shortcuts) => shortcuts(app, ctx),
         Some(Dialog::Unsaved(action)) => unsaved(app, ctx, action),

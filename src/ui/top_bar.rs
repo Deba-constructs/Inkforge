@@ -233,6 +233,27 @@ fn image_menu(app: &mut InkforgeApp, ui: &mut egui::Ui) {
     }
 
     ui.separator();
+    if ui.button("Canvas size…").clicked() {
+        app.request_canvas_size();
+        ui.close();
+    }
+
+    let has_selection = app.canvas.selection().is_some();
+    if ui
+        .add_enabled(has_selection, Button::new("Crop to selection"))
+        .on_disabled_hover_text("Select an area first.")
+        .clicked()
+    {
+        app.crop_to_selection();
+        ui.close();
+    }
+
+    if ui.button("Trim transparent edges").clicked() {
+        app.trim_transparent();
+        ui.close();
+    }
+
+    ui.separator();
     ui.label(
         RichText::new(format!(
             "Artwork: {} × {} px. These change the pixels, not the view.",

@@ -566,6 +566,22 @@ impl Selection {
         self.mask.is_some()
     }
 
+    /// Bytes the coverage mask occupies, for history accounting.
+    pub fn mask_bytes(&self) -> usize {
+        self.mask
+            .as_ref()
+            .map_or(0, |mask| mask.len() + self.soft.len() * std::mem::size_of::<SoftSpan>())
+    }
+
+    /// Whether two selections cover the same pixels.
+    ///
+    /// Used to skip an undo step when a slider is dragged back to where it
+    /// started. The outline cache is deliberately ignored: it is presentation,
+    /// not shape.
+    pub fn same_shape(&self, other: &Self) -> bool {
+        self.bounds == other.bounds && self.mask == other.mask
+    }
+
     pub fn contains(&self, x: u32, y: u32) -> bool {
         self.coverage(x, y) > 0.0
     }

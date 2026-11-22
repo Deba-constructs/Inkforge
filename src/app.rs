@@ -10,8 +10,9 @@ use std::time::{Duration, Instant};
 use inkforge::egui::{Color32, Context, Key, Modifiers, Pos2, ViewportCommand};
 
 use crate::engine::{
-    Background, BrushDab, BrushSettings, Canvas, PenSample, PenSettings, PixelRegion, Selection,
-    SelectionMode, ShapeKind, Stabilizer, ThumbnailCache, TilePyramid, Viewport, MAX_FEATHER,
+    validate_canvas_size, Anchor, Background, BrushDab, BrushSettings, Canvas, PenSample,
+    PenSettings, PixelRegion, Selection, SelectionMode, ShapeKind, Stabilizer, ThumbnailCache,
+    TilePyramid, Viewport, DEFAULT_DPI, MAX_FEATHER,
 };
 use crate::history::{Edit, History, Recorder};
 use crate::io::{
@@ -113,6 +114,8 @@ impl Tool {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Dialog {
     NewCanvas,
+    /// Resize or crop an existing document and edit its print setup.
+    CanvasSize,
     About,
     Shortcuts,
     /// An action that would discard unsaved work; ask the artist first.
@@ -198,6 +201,46 @@ impl NewCanvasState {
     }
 }
 
+/// Working state of the "Canvas size" window.
+#[derive(Clone, Debug)]
+pub struct CanvasSizeState {
+    pub width: u32,
+    pub height: u32,
+    pub dpi: f32,
+    pub bleed_mm: f32,
+    pub safe_mm: f32,
+    pub anchor: Anchor,
+    pub error: Option<String>,
+}
+
+impl Default for CanvasSizeState {
+    fn default() -> Self {
+        Self {
+            width: 1920,
+            height: 1080,
+            dpi: DEFAULT_DPI,
+            bleed_mm: 0.0,
+            safe_mm: 0.0,
+            anchor: Anchor::Center,
+            error: None,
+        }
+    }
+}
+
+impl CanvasSizeState {
+    pub fn from_canvas(canvas: &Canvas) -> Self {
+        Self {
+            width: canvas.width(),
+            height: canvas.height(),
+            dpi: canvas.dpi(),
+            bleed_mm: canvas.bleed_mm(),
+            safe_mm: canvas.safe_mm(),
+            anchor: Anchor::Center,
+            error: None,
+        }
+    }
+}
+
 /// Keyboard and menu actions collected once per frame.
 #[derive(Default)]
 struct Actions {
@@ -237,13 +280,15 @@ pub struct StrokeState {
 
 /// State of a stroke that paints the selection instead of a layer, while the
 /// Quick Mask view is on.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct MaskStroke {
     /// Last stamped canvas position.
     last: Pos2,
     /// Speed-adaptive smoothing of the pointer path.
     stabilizer: Stabilizer,
     erase: bool,
+    /// Selection before the stroke, so the whole stroke is one undo step.
+    before: Option<Selection>,
 }
 
 /// A layer or group row renamed in place in the layer list.
@@ -291,6 +336,8 @@ pub struct InkforgeApp {
     pub show_sidebar: bool,
     pub dialog: Option<Dialog>,
     pub new_canvas: NewCanvasState,
+    /// Working state of the Canvas size window.
+    pub canvas_size: CanvasSizeState,
     /// Canvas presets: the built-in catalog, the artist's own, favourites and
     /// recents.
     pub presets: PresetLibrary,
@@ -415,6 +462,7 @@ impl InkforgeApp {
             show_sidebar: true,
             dialog: None,
             new_canvas: NewCanvasState::default(),
+            canvas_size: CanvasSizeState::default(),
             presets: PresetLibrary::new(),
             presets_dir: None,
             settings_dir: None,
@@ -588,6 +636,152 @@ impl InkforgeApp {
             }
             Err(message) => self.new_canvas.error = Some(message),
         }
+    }
+
+    // ---- canvas size, crop and setup -----------------------------------
+
+    /// Open the Canvas size window, filled in from the open document.
+    pub fn request_canvas_size(&mut self) {
+        self.canvas_size = CanvasSizeState::from_canvas(&self.canvas);
+        self.dialog = Some(Dialog::CanvasSize);
+    }
+
+    /// Apply the Canvas size window: print setup first, then the size change,
+    /// so each is its own undo step.
+    pub fn apply_canvas_size(&mut self) {
+        let draft = self.canvas_size.clone();
+        if let Err(message) = validate_canvas_size(draft.width, draft.height) {
+            self.canvas_size.error = Some(message);
+            return;
+        }
+
+        let dpi = if draft.dpi.is_finite() {
+            draft.dpi.clamp(1.0, crate::engine::MAX_DPI)
+        } else {
+            DEFAULT_DPI
+        };
+        let mm_to_px = |mm: f32| mm.max(0.0) / 25.4 * dpi.max(1.0);
+        let before = self.print_setup();
+        let after = [
+            dpi,
+            before[1],
+            mm_to_px(draft.bleed_mm),
+            mm_to_px(draft.safe_mm),
+        ];
+        if after != before {
+            self.canvas
+                .set_print_setup(after[0], after[1], after[2], after[3]);
+            self.history.push(Edit::print_setup(before, after));
+        }
+
+        let resized = self.resize_canvas(draft.width, draft.height, draft.anchor);
+        self.dialog = None;
+        if !resized && after == before {
+            self.set_status("Canvas setup unchanged.");
+        }
+    }
+
+    /// `[dpi, pixel aspect, bleed px, safe px]` as the document has them.
+    fn print_setup(&self) -> [f32; 4] {
+        [
+            self.canvas.dpi(),
+            self.canvas.pixel_aspect(),
+            self.canvas.bleed_px(),
+            self.canvas.safe_px(),
+        ]
+    }
+
+    /// Resize the page around an anchor, keeping existing artwork in place.
+    /// Returns whether anything changed.
+    pub fn resize_canvas(&mut self, width: u32, height: u32, anchor: Anchor) -> bool {
+        let (old_width, old_height) = (self.canvas.width(), self.canvas.height());
+        if (width, height) == (old_width, old_height) {
+            return false;
+        }
+        if validate_canvas_size(width, height).is_err() {
+            return false;
+        }
+
+        let offset = anchor.offset((old_width, old_height), (width, height));
+        let (entries, active) = self.canvas.snapshot_entries();
+        self.canvas.resize_with_offset(width, height, offset);
+        self.history.push(Edit::canvas_resize(
+            entries, active, old_width, old_height, width, height, offset,
+        ));
+        self.set_status(format!(
+            "Canvas resized to {width} × {height} px, anchored {}",
+            anchor.label().to_lowercase()
+        ));
+        true
+    }
+
+    /// Crop the page to the selection.
+    pub fn crop_to_selection(&mut self) {
+        let Some(region) = self.canvas.clip() else {
+            self.set_status("Select an area first, then crop to it.");
+            return;
+        };
+        let (width, height) = (self.canvas.width(), self.canvas.height());
+        if region.x == 0
+            && region.y == 0
+            && region.width == width
+            && region.height == height
+        {
+            self.set_status("The selection already covers the whole canvas.");
+            return;
+        }
+
+        let (entries, active) = self.canvas.snapshot_entries();
+        let offset = (-(region.x as i32), -(region.y as i32));
+        self.canvas.crop_to(region);
+        self.history.push(Edit::canvas_resize(
+            entries,
+            active,
+            width,
+            height,
+            region.width,
+            region.height,
+            offset,
+        ));
+        self.set_status(format!(
+            "Cropped to {} × {} px",
+            region.width, region.height
+        ));
+    }
+
+    /// Crop away fully transparent margins around everything visible.
+    pub fn trim_transparent(&mut self) {
+        let Some(bounds) = self.canvas.visible_bounds() else {
+            self.set_status("Nothing is visible — there is no artwork to trim to.");
+            return;
+        };
+
+        let (width, height) = (self.canvas.width(), self.canvas.height());
+        if bounds.x == 0
+            && bounds.y == 0
+            && bounds.width == width
+            && bounds.height == height
+        {
+            self.set_status("No transparent edges to trim.");
+            return;
+        }
+
+        let (entries, active) = self.canvas.snapshot_entries();
+        let offset = (-(bounds.x as i32), -(bounds.y as i32));
+        self.canvas.crop_to(bounds);
+        self.history.push(Edit::canvas_resize(
+            entries,
+            active,
+            width,
+            height,
+            bounds.width,
+            bounds.height,
+            offset,
+        ));
+        self.set_status(format!(
+            "Trimmed to {} × {} px",
+            bounds.width, bounds.height
+        ));
     }
 
     // ---- canvas presets -------------------------------------------------
@@ -880,6 +1074,7 @@ impl InkforgeApp {
 
     /// Start a stroke that paints into the selection (Quick Mask is on).
     fn begin_mask_stroke(&mut self, canvas_pos: Pos2, dab: crate::engine::BrushDab) {
+        let before = self.canvas.selection().cloned();
         // With nothing selected the stroke needs an empty field to paint into.
         if self.canvas.selection().is_none() {
             self.canvas
@@ -891,6 +1086,7 @@ impl InkforgeApp {
             last: canvas_pos,
             stabilizer: Stabilizer::begin(canvas_pos),
             erase: dab.erase,
+            before,
         });
 
         let status = if dab.erase {
@@ -908,7 +1104,7 @@ impl InkforgeApp {
 
     /// Continue the active stroke, smoothing the pointer path.
     pub fn extend_stroke(&mut self, canvas_pos: Pos2) {
-        if let Some(mut state) = self.mask_stroke {
+        if let Some(mut state) = self.mask_stroke.take() {
             let smoothed = state.stabilizer.push(canvas_pos, self.brush.smoothing());
             let dab = self.current_dab(state.erase);
             self.canvas.paint_selection(state.last, smoothed, &dab);
@@ -950,9 +1146,20 @@ impl InkforgeApp {
 
     /// Finish the active stroke and commit it to history.
     pub fn end_stroke(&mut self) {
-        // A Quick Mask stroke edits the selection, so it has no pixels to undo.
-        if self.mask_stroke.take().is_some() {
-            if self.canvas.finish_selection_paint() {
+        // A Quick Mask stroke edits the selection, so its history entry is the
+        // selection pair rather than pixels.
+        if let Some(state) = self.mask_stroke.take() {
+            let painted = self.canvas.finish_selection_paint();
+            let after = self.canvas.selection().cloned();
+            let changed = match (&state.before, &after) {
+                (None, None) => false,
+                (Some(before), Some(after)) => !before.same_shape(after),
+                _ => true,
+            };
+            if changed {
+                self.history.push(Edit::selection(state.before, after));
+            }
+            if painted {
                 self.set_status("Selection painted.");
             } else {
                 self.set_status("The selection is empty — selection cleared.");
@@ -2024,6 +2231,25 @@ impl InkforgeApp {
 
     // ---- selection, fill and shapes -----------------------------------
 
+    /// Replace the selection and record it as one undo step.
+    ///
+    /// Every entry point — marquee, lasso, wand, invert, select all, deselect —
+    /// goes through here, so a selection can always be undone back to what it
+    /// was before the click. A no-op change records nothing.
+    pub fn set_selection(&mut self, selection: Option<Selection>) {
+        let before = self.canvas.selection().cloned();
+        let changed = match (&before, &selection) {
+            (None, None) => false,
+            (Some(before), Some(after)) => !before.same_shape(after),
+            _ => true,
+        };
+        if !changed {
+            return;
+        }
+        self.canvas.set_selection(selection.clone());
+        self.history.push(Edit::selection(before, selection));
+    }
+
     /// Begin dragging a rectangular selection.
     pub fn begin_selection_drag(&mut self, at: Pos2) {
         self.end_stroke();
@@ -2051,10 +2277,10 @@ impl InkforgeApp {
         ) {
             Some(selection) => {
                 self.set_status(format!("Selection: {}", selection.label()));
-                self.canvas.set_selection(Some(selection));
+                self.set_selection(Some(selection));
             }
             None => {
-                self.canvas.clear_selection();
+                self.set_selection(None);
                 self.set_status("Selection cleared.");
             }
         }
@@ -2091,10 +2317,10 @@ impl InkforgeApp {
         {
             Some(selection) => {
                 self.set_status(format!("Selection: {}", selection.label()));
-                self.canvas.set_selection(Some(selection));
+                self.set_selection(Some(selection));
             }
             None => {
-                self.canvas.clear_selection();
+                self.set_selection(None);
                 self.set_status("The lasso enclosed no area — selection cleared.");
             }
         }
@@ -2107,10 +2333,10 @@ impl InkforgeApp {
         match self.canvas.wand_selection_at(at, self.wand_tolerance, self.feather) {
             Some(selection) => {
                 self.set_status(format!("Selection: {}", selection.label()));
-                self.canvas.set_selection(Some(selection));
+                self.set_selection(Some(selection));
             }
             None => {
-                self.canvas.clear_selection();
+                self.set_selection(None);
                 self.set_status("Nothing similar there — selection cleared.");
             }
         }
@@ -2152,9 +2378,22 @@ impl InkforgeApp {
     /// and the slider returns to the middle.
     pub fn finish_grow(&mut self) {
         let pixels = self.grow_offset.round() as i32;
-        let started = self.grow_base.is_some();
+        let base = self.grow_base.take();
+        let started = base.is_some();
         self.grow_offset = 0.0;
-        self.grow_base = None;
+
+        // The preview moved the selection every frame without touching history;
+        // the whole drag becomes one step when the slider is released.
+        if let Some(base) = base {
+            let after = self.canvas.selection().cloned();
+            let changed = match &after {
+                Some(after) => !base.same_shape(after),
+                None => true,
+            };
+            if changed {
+                self.history.push(Edit::selection(Some(base), after));
+            }
+        }
 
         if !started {
             if pixels != 0 {
@@ -2197,10 +2436,16 @@ impl InkforgeApp {
             return;
         }
 
+        let before = self.canvas.selection().cloned();
         match self.canvas.invert_selection() {
-            Some(_) => self.set_status("Inverted the selection."),
+            Some(_) => {
+                let after = self.canvas.selection().cloned();
+                self.history.push(Edit::selection(before, after));
+                self.set_status("Inverted the selection.");
+            }
             None => {
                 self.canvas.clear_selection();
+                self.history.push(Edit::selection(before, None));
                 self.set_status("The whole canvas was selected — selection cleared.");
             }
         }
@@ -2221,12 +2466,13 @@ impl InkforgeApp {
     }
 
     pub fn select_all(&mut self) {
-        self.canvas.select_all();
+        let (width, height) = (self.canvas.width(), self.canvas.height());
+        self.set_selection(Some(Selection::whole(width, height)));
         self.set_status("Selected the whole canvas");
     }
 
     pub fn deselect(&mut self) {
-        self.canvas.clear_selection();
+        self.set_selection(None);
         self.set_status("Selection cleared.");
     }
 

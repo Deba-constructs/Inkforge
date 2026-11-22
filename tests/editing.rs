@@ -921,10 +921,22 @@ fn quick_mask_painting_leaves_the_layer_alone() {
         0,
         "a Quick Mask stroke must not touch pixels"
     );
-    assert_eq!(app.history.undo_depth(), depth, "and it records no pixel edit");
+    assert_eq!(
+        app.history.undo_depth(),
+        depth + 1,
+        "one step, and it is the selection — not a pixel edit"
+    );
     let selection = app.canvas.selection().expect("selection");
     assert!(selection.coverage(20, 20) > 0.0);
     assert!(!app.is_painting_mask());
+
+    app.undo();
+    let restored = app.canvas.selection().expect("select-all is back");
+    assert_eq!(
+        restored.coverage(20, 20),
+        1.0,
+        "undo restores the selection from before the stroke"
+    );
 }
 
 #[test]

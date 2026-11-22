@@ -1,5 +1,6 @@
 //! UI layer: one module per region of the workspace plus shared theming.
 
+pub mod canvas_size;
 pub mod canvas_view;
 pub mod dialogs;
 pub mod icons;

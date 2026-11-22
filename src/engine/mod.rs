@@ -14,6 +14,7 @@ pub mod presets;
 pub mod pen;
 pub mod pyramid;
 pub mod renderer;
+pub mod resize;
 pub mod selection;
 pub mod shape;
 pub mod stabilizer;
@@ -34,6 +35,7 @@ pub use canvas::{
 pub use fill::FillMask;
 pub use pyramid::{TilePyramid, TILE};
 pub use renderer::ThumbnailCache;
+pub use resize::Anchor;
 pub use selection::{Clip, Selection, SelectionMode, SoftSpan, MAX_FEATHER, MAX_GROW};
 pub use shape::{shape_path, ShapeKind};
 pub use surface::{segment_bounds, PixelRegion, Surface};

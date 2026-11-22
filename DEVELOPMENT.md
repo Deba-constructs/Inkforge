@@ -673,6 +673,33 @@ an ICC-based colour pipeline, and CMYK / Grayscale / 16- and 32-bit canvases.
   `PageView::point`, so they follow canvas rotation even though the rulers hide
   while it is turned.
 
+### Document operations and selection history (unreleased)
+
+Continuing the inventory in dependency order:
+
+* **Resize, crop and trim (`engine/resize.rs`, `Surface::resize`,
+  `LayerStack::resize`)** — a resize copies the overlap and discards the rest,
+  so it is exact and lossless; nothing is interpolated. `Anchor` defines where
+  the old origin lands in the new page, which makes shrinking a crop with a
+  corner anchor. `Canvas::crop_to` is the same path with a negative offset, and
+  `Canvas::visible_bounds` (the composite's opaque box) is what trimming uses.
+* **Undo for page changes** — `Change::CanvasResize` stores the pre-change
+  entries and replays the resize for redo, so one copy of the pixels is
+  retained instead of a before/after pair. `Change::PrintSetup` stores the four
+  setup values; both restore through `Canvas::restore_entries`.
+* **Canvas size window (`ui/canvas_size.rs`)** — width, height, resolution,
+  bleed, safe area and a 3 × 3 anchor grid. The Image menu also exposes "Crop
+  to selection" and "Trim transparent edges". Applying print setup and size
+  are separate undo steps.
+* **Selection history** — every selection entry point now funnels through
+  `InkforgeApp::set_selection`, which stores an `Option<Selection>` pair. Grow /
+  Shrink previews move the selection without touching history and commit one
+  step on release; a Quick Mask stroke captures the selection at stroke start
+  and commits at the end. `Selection::same_shape` stops no-op steps.
+* **Known limits** — a resize clears the selection (item 24), and selection
+  save/load is still open. The Canvas size window has only been rendered
+  headlessly.
+
 ### Tier 1 local work after 1.5.0 (unreleased)
 
 Directed by the remaining-work inventory, in dependency order, kept local until
@@ -761,7 +788,7 @@ release is authorised:
 | Check | Command | Result |
 | --- | --- | --- |
 | Type/compile check, all targets | `cargo check --all-targets` | Passes, 0 errors, 0 warnings |
-| Tests | `cargo test --all-targets` | Passes — 336 tests, 0 failures (exit 0), including 7 new workspace tests (persisted preferences, undoable background, PNG resolution import) and 3 new preference/PNG unit tests. Also including 20 in-crate unit tests (unit conversion, validation, aspect maths, the preset library, PNG chunk writing) and 15 new canvas-preset integration tests. The rest of the breakdown: 7 painting, 39 layers/groups, 7 layer alpha lock, 16 blend modes, 9 clipping, 12 layer masks, 16 colour adjustments, 8 history, 7 brush presets, 6 stabiliser, 50 selection/fill/shapes, 18 headless UI, 9 file I/O, 12 OpenRaster export, 7 autosave/recovery, 7 recent projects, 11 tile pyramid, 7 performance, 9 pen pressure/tilt, 2 Win32 pointer layouts, 10 canvas rotation, 8 document transforms |
+| Tests | `cargo test --all-targets` | Passes, 0 failures (exit 0), including the workspace tests (persisted preferences, undoable background, PNG resolution import), the document-operation tests (resize, crop, trim, print setup, selection undo) and the resize-anchor unit tests (unit conversion, validation, aspect maths, the preset library, PNG chunk writing) and 15 new canvas-preset integration tests. The rest of the breakdown: 7 painting, 39 layers/groups, 7 layer alpha lock, 16 blend modes, 9 clipping, 12 layer masks, 16 colour adjustments, 8 history, 7 brush presets, 6 stabiliser, 50 selection/fill/shapes, 18 headless UI, 9 file I/O, 12 OpenRaster export, 7 autosave/recovery, 7 recent projects, 11 tile pyramid, 7 performance, 9 pen pressure/tilt, 2 Win32 pointer layouts, 10 canvas rotation, 8 document transforms |
 | Canvas rotation | `cargo test --test view_rotation` | A fresh view is upright; a quarter turn sends the page corners where they look like they go; screen and canvas stay exact inverses at eight angles with zoom and pan applied; cursor-anchored zoom on a turned view does not drift; angles accumulate and wrap into (-180°, 180°]; 1.5° near a quarter turn snaps onto it while a deliberate 0.5 rad is left alone; reset and NaN/infinite input behave; a turned landscape page fits into the window height (0.528 at 1000 × 600) instead of the width; the page rectangle itself is not turned. The turned *rendering* has not been looked at — no display here (§8) |
 | Pen pressure and tilt | `cargo test --test pen` and `cargo test --lib pointer` | A mouse leaves the brush exactly as configured; half pressure paints fainter *and* narrower (a dab's footprint stops short of where full pressure reaches); a feather touch still leaves a line above `MIN_DAB_RADIUS`; 60° of tilt widens a 20 px tip to 26 px without changing opacity, and never pushes the brush past `MAX_SIZE`; 0% amounts and the off switch ignore the pen entirely; a NaN/infinite reading falls back to full pressure; a real stroke driven through `begin_stroke`/`extend_stroke` covers 18 px above its path at full pressure but not at 25%; and the Win32 `POINTER_INFO` / `POINTER_PEN_INFO` sizes and field offsets match the 64-bit SDK. The tablet path itself has **not** run — no pen and no Windows here (§8) |
 | Start state | `cargo test --test ui_smoke` | An untouched canvas paints the "Start painting" card, a simulated drag removes it, and undoing the only stroke brings it back (proving the cached empty check follows the composite revision) |
