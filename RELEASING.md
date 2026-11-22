@@ -1,9 +1,8 @@
-# Releasing INKFORGE 1.6.0
+# Releasing INKFORGE Beta 0.7 (1.6.0)
 
-This is the checklist for the next GitHub release. **Nothing has been pushed,
-tagged or published.** Everything below was prepared locally so that publishing
-is a single, reviewed command run by you (or by an assistant you explicitly tell
-to push).
+Beta numbering: 0.1 → v1.0.0, 0.2 → v1.1.0, 0.3 → v1.2.0, 0.4 → v1.3.0,
+0.5 → v1.4.0, v1.5.0 was published as "Beta 3", so v1.6.0 is **Beta 0.7**.
+This is the checklist for that GitHub release; it was published on 2026-11-22.
 
 ## What is ready in this working copy
 
@@ -63,7 +62,7 @@ git push origin v1.6.0
 
 # 3. Create the release with the prebuilt ZIP and the prepared notes.
 gh release create v1.6.0 dist/INKFORGE-1.6.0-windows-x86_64.zip \
-   --title "INKFORGE 1.6.0" \
+   --title "INKFORGE Beta 0.7 — polygon selections, combine modes and transformed selections" \
    --notes-file RELEASE-NOTES-1.6.0.md
 ```
 

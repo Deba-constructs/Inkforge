@@ -1,6 +1,7 @@
-# INKFORGE 1.6.0
+# INKFORGE Beta 0.7 — 1.6.0
 
-The release that finishes the editing half of the app. Selections became
+Beta 0.6 was the v1.5.0 build (published as "Beta 3"); this is the next beta in
+the numbered series, v1.6.0. It finishes the editing half of the app. Selections became
 undoable and combinable, the page can be resized or cropped after it was
 created, and a flipping or turning document keeps its selection.
 

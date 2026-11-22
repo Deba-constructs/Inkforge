@@ -1,10 +1,10 @@
 # Changelog
 
 Everything that shipped, newest first. Versions 1.0.0 to 1.4.0 were released as
-portable Windows ZIPs; 1.5.0 ("Beta 3") is the last published release. 1.6.0 is
-prepared and has not been published yet — see [RELEASING.md](RELEASING.md).
+portable Windows ZIPs under the Beta 0.1–0.5 names; 1.5.0 went out as "Beta 3"
+and 1.6.0 as "Beta 0.7" — see [RELEASING.md](RELEASING.md).
 
-## 1.6.0 — prepared, not yet published
+## 1.6.0 — Beta 0.7
 
 The release that finishes the editing half of the app: selections became
 undoable and combinable, the page can be resized or cropped after it was
